@@ -14,7 +14,7 @@ button through serve.py), on a phone in Termux, or on a Mac.
 
 Settings, all optional:
   GROQ_API_KEY     the key; else the file groq_key in SHOPFINDER_DATA, else next to this script
-  GROQ_MODEL       default llama-3.3-70b-versatile
+  GROQ_MODEL       the model (or a comma list) to try first; default openai/gpt-oss-120b, then gpt-oss-20b, qwen3.8-27b
   SHOPFINDER_DATA  where pools.json (and groq_key) live; default: the folder of this script
   POOLS_OUT        the exact output path, wins over SHOPFINDER_DATA
   TZ               the machine runs in UTC; install.sh sets Europe/Zagreb for the service and the timer
@@ -33,7 +33,10 @@ import urllib.error
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.environ.get("SHOPFINDER_DATA") or HERE
 OUT_PATH = os.environ.get("POOLS_OUT") or os.path.join(DATA_DIR, "pools.json")
-GROQ_MODEL = (os.environ.get("GROQ_MODEL") or "llama-3.3-70b-versatile").strip()
+# Groq retires models (llama-3.3-70b-versatile was gone by 12.9.2026): the first of these that
+# answers is used; GROQ_MODEL (comma-separated allowed) puts other names first.
+GROQ_MODELS = [m.strip() for m in (os.environ.get("GROQ_MODEL") or "").split(",") if m.strip()] + \
+              ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b", "llama-3.3-70b-versatile"]
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 MAX_WORKERS = 8
 
@@ -141,8 +144,23 @@ def call_groq(key, page_text, pool_name, today_iso, weekday_hr, is_holiday):
         "change relevant today, else empty string.\n\n"
         "PAGE TEXT:\n" + snippet
     )
+    last = None
+    for model in GROQ_MODELS:
+        try:
+            return call_groq_model(key, model, system, user)
+        except urllib.error.HTTPError as e:
+            body = e.read().decode("utf-8", "ignore")
+            if e.code in (400, 404) and "model" in body and ("not exist" in body or "not_found" in body or "decommissioned" in body):
+                log("  model " + model + " is not available, trying the next")
+                last = e
+                continue
+            raise
+    raise last or RuntimeError("no Groq model answered")
+
+
+def call_groq_model(key, model, system, user):
     payload = json.dumps({
-        "model": GROQ_MODEL,
+        "model": model,
         "temperature": 0,
         "response_format": {"type": "json_object"},
         "messages": [
