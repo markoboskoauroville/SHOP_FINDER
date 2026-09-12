@@ -75,7 +75,7 @@
   .toggle.free { border-color: var(--open); color: var(--open); background: rgba(63,185,80,0.08); }
   .toggle.paid { border-color: #f0883e; color: #f0883e; background: rgba(240,136,62,0.10); }
   /* Leaflet (the free map) in the same dark look */
-  .leaflet-container { background: #1b1f27; font-family: inherit; }
+  .leaflet-container { background: #1b1f27; font-family: inherit; overflow: hidden; position: relative; }
   .leaflet-tile-pane { filter: brightness(0.6) invert(1) contrast(3) hue-rotate(200deg) saturate(0.3) brightness(0.7); }
   .leaflet-control-attribution { background: rgba(13,17,23,0.85) !important; color: var(--muted) !important; font-size: 10px; }
   .leaflet-control-attribution a { color: var(--cyan) !important; }
@@ -486,12 +486,19 @@ function loadGoogle() {
 function loadLeaflet() {
   if (window.L) return Promise.resolve();
   if (_lPromise) return _lPromise;
-  _lPromise = new Promise((resolve, reject) => {
-    const css = document.createElement("link"); css.rel = "stylesheet"; css.href = LEAFLET + ".css"; document.head.appendChild(css);
+  // the stylesheet AND the script, both, before the first map: a map built before its CSS arrives
+  // draws its pins outside the box
+  const cssReady = new Promise(resolve => {
+    const css = document.createElement("link"); css.rel = "stylesheet"; css.href = LEAFLET + ".css";
+    css.onload = resolve; css.onerror = resolve; document.head.appendChild(css);
+    setTimeout(resolve, 4000);
+  });
+  const jsReady = new Promise((resolve, reject) => {
     const s = document.createElement("script"); s.src = LEAFLET + ".js"; s.async = true;
     s.onload = () => resolve(); s.onerror = () => reject(new Error("Leaflet did not load"));
     document.head.appendChild(s);
   });
+  _lPromise = Promise.all([cssReady, jsReady]).then(() => {});
   return _lPromise;
 }
 const ENGINE = {
