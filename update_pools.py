@@ -25,6 +25,7 @@ import re
 import sys
 import json
 import html
+import time
 import datetime
 import concurrent.futures
 import urllib.request
@@ -38,7 +39,10 @@ OUT_PATH = os.environ.get("POOLS_OUT") or os.path.join(DATA_DIR, "pools.json")
 GROQ_MODELS = [m.strip() for m in (os.environ.get("GROQ_MODEL") or "").split(",") if m.strip()] + \
               ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b", "llama-3.3-70b-versatile"]
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-MAX_WORKERS = 8
+# One pool at a time: Groq's free tier allows a few thousand tokens a minute, and eight pages at once
+# answered 429 (12.9.2026). A 429 waits what Groq asks and tries again, three times.
+MAX_WORKERS = 1
+SNIPPET_CHARS = 4000
 
 
 def groq_key():
@@ -120,9 +124,58 @@ def fetch_page(url):
     return text.strip()
 
 
-def call_groq(key, page_text, pool_name, today_iso, weekday_hr, is_holiday):
+KEYWORDS = ("radno vrijeme", "gra\u0111an", "gradjan", "rekreativ", "plivanje za", "termin", "obavijest",
+            "zatvoren", "ponedjeljak", "subota", "nedjelja", "praznik", "sati")
+
+
+TEMPLATE_URL = OFFICIAL + "bazeni/1361"   # a generic page of the site: its lines are the menu, the news, the footer
+
+
+def fetch_template_lines():
+    """The lines every page of sportskiobjekti.hr shares (the menu of all objects, the news, the
+    footer): about 19,000 of a pool page's 24,000 characters. Removed from each pool page, so Groq
+    reads the pool's own text only. Empty when the fetch fails (then the keyword trim does its best)."""
+    try:
+        return set(l.strip() for l in fetch_page(TEMPLATE_URL).splitlines() if l.strip())
+    except Exception as e:
+        log("template page not fetched (" + repr(e) + "), sending the keyword windows instead")
+        return set()
+
+
+def own_text(text, template_lines):
+    if not template_lines:
+        return text
+    kept = [l for l in text.splitlines() if l.strip() and l.strip() not in template_lines]
+    return "\n".join(kept)
+
+
+def trim_text(text, limit=SNIPPET_CHARS):
+    """The part of the page that talks about hours: windows around the keywords, in page order,
+    joined and capped, so a call costs a fraction of the whole page (the free tier counts tokens)."""
+    low = text.lower()
+    spans = []
+    for kw in KEYWORDS:
+        i = low.find(kw)
+        while i >= 0 and len(spans) < 40:
+            spans.append((max(0, i - 500), min(len(text), i + 900)))
+            i = low.find(kw, i + len(kw))
+    if not spans:
+        return text[:limit]
+    spans.sort()
+    merged = []
+    for a, b in spans:
+        if merged and a <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], b))
+        else:
+            merged.append((a, b))
+    out = " ... ".join(text[a:b] for a, b in merged)
+    return out[:limit]
+
+
+def call_groq(key, page_text, pool_name, today_iso, weekday_hr, is_holiday, template_lines=frozenset()):
     """Ask Groq for today's public-swim hours plus a notice, as strict JSON."""
-    snippet = page_text[:9000]
+    own = own_text(page_text, template_lines)
+    snippet = own if len(own) <= SNIPPET_CHARS else trim_text(own)
     system = (
         "You read Croatian municipal swimming-pool web pages and extract the "
         "public-swim hours (termini za gradjanstvo, rekreativno plivanje) for a specific day. "
@@ -146,15 +199,25 @@ def call_groq(key, page_text, pool_name, today_iso, weekday_hr, is_holiday):
     )
     last = None
     for model in GROQ_MODELS:
-        try:
-            return call_groq_model(key, model, system, user)
-        except urllib.error.HTTPError as e:
-            body = e.read().decode("utf-8", "ignore")
-            if e.code in (400, 404) and "model" in body and ("not exist" in body or "not_found" in body or "decommissioned" in body):
-                log("  model " + model + " is not available, trying the next")
+        for attempt in range(4):
+            try:
+                return call_groq_model(key, model, system, user)
+            except urllib.error.HTTPError as e:
+                body = e.read().decode("utf-8", "ignore")
                 last = e
-                continue
-            raise
+                if e.code in (400, 404) and "model" in body and ("not exist" in body or "not_found" in body or "decommissioned" in body):
+                    log("  model " + model + " is not available, trying the next")
+                    break
+                if e.code == 429 and attempt < 3:
+                    wait = e.headers.get("retry-after")
+                    m = re.search(r"try again in ([\d.]+)\s*(m|s)", body)
+                    secs = float(wait) if wait and wait.replace(".", "", 1).isdigit() else (
+                        float(m.group(1)) * (60 if m.group(2) == "m" else 1) if m else 12.0)
+                    secs = min(max(secs + 1, 3), 90)
+                    log("  429 from Groq (" + body[:120].replace("\n", " ") + "), waiting %.0f s" % secs)
+                    time.sleep(secs)
+                    continue
+                raise
     raise last or RuntimeError("no Groq model answered")
 
 
@@ -205,7 +268,7 @@ def hours_text(ranges, closed_today):
     return ", ".join(r[0] + "-" + r[1] for r in ranges)
 
 
-def process_pool(key, p, now, today_iso, weekday_hr, is_holiday):
+def process_pool(key, p, now, today_iso, weekday_hr, is_holiday, template_lines=frozenset()):
     """One pool: fetch its page, extract the hours. Runs in a worker thread."""
     entry = {
         "id": p["id"], "name": p["name"], "addr": p["addr"],
@@ -215,7 +278,7 @@ def process_pool(key, p, now, today_iso, weekday_hr, is_holiday):
     try:
         log("fetching " + p["name"])
         text = fetch_page(p["url"])
-        res = call_groq(key, text, p["name"], today_iso, weekday_hr, is_holiday)
+        res = call_groq(key, text, p["name"], today_iso, weekday_hr, is_holiday, template_lines)
         ranges = res.get("today_ranges") or []
         closed = res.get("closed_today", None)
         entry["open_now"] = (False if closed is True else compute_open_now(ranges, now))
@@ -245,8 +308,9 @@ def main():
     weekday_hr = DAYS_HR[(now.weekday() + 1) % 7]
     is_holiday = today_iso in HOLIDAYS or now.weekday() >= 5
 
+    template_lines = fetch_template_lines()
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
-        futures = {ex.submit(process_pool, key, p, now, today_iso, weekday_hr, is_holiday): i
+        futures = {ex.submit(process_pool, key, p, now, today_iso, weekday_hr, is_holiday, template_lines): i
                    for i, p in enumerate(POOLS)}
         results = [None] * len(POOLS)
         for fut in concurrent.futures.as_completed(futures):

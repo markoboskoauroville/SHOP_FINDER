@@ -27,7 +27,7 @@ deployed by `bash deploy.sh` from the Mac (wrangler through npx).
 
     systemctl status shopfinder                 the server
     systemctl list-timers | grep shopfinder     the GitHub check (1 min) and the pool timer (06:15 Zagreb, and 5 min after boot)
-    journalctl -u shopfinder-pools -n 30        the last pool run
+    journalctl -u shopfinder-pools -n 30        the last timer run (the button's runs log to journalctl -u shopfinder)
     curl -s http://127.0.0.1:8900/shopfinder/health
     cat /home/ubuntu/.shopfinder/pools.json
 
@@ -62,7 +62,11 @@ Overpass API (overpass-api.de, then overpass.kumi.systems) for the shops and the
 tag, read by a small parser in the page (Mo-Fr/Sa/Su/PH rules, two ranges, over midnight, 24/7;
 an unreadable value is shown raw as "hours unknown"), OSRM at routing.openstreetmap.de for the walk.
 The pool hours come from pools.json, which the machine produces with one Groq call per pool
-(Groq's free tier), eight a day plus the refresh button, never more than once in ten minutes.
+(Groq's free tier: `openai/gpt-oss-120b`, then gpt-oss-20b, qwen3.8-27b, whichever answers; the
+old llama-3.3-70b was retired), one pool at a time with only the hours-related part of each page
+(a few thousand tokens a minute is the whole allowance, eight whole pages at once got 429), eight a
+day plus the refresh button, never more than once in ten minutes. A run takes one to three minutes;
+the button starts it and the page polls /health until pools.json is rewritten.
 
 Paid mode ("Google · paid", orange): Places API (New) text search per brand query and, when
 pools.json is not there, per pool; the Maps JavaScript API for the map. Each is billed to the key.

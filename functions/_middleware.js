@@ -4,12 +4,13 @@
 // while the machine sleeps. Two addresses are relayed to the Oracle machine, through Caddy, with the
 // door key only this function knows (the Pages secrets ORIGIN and DOOR_KEY, set by deploy.sh):
 //     /pools.json   the hours update_pools.py wrote on the machine
-//     /update       run the updater now
+//     /update       start the updater (it answers at once; the page polls /health)
+//     /health       when pools.json was written, and whether a run is going
 // and /config.js carries the Google key (the secret GOOGLE_MAPS_KEY) for the paid map option.
 // When the machine does not answer in time the page gets {ok:false, asleep:true} and shows the
 // pools with live Google hours instead. Everything else falls through to the static files.
 
-const RELAY = { '/pools.json': 12000, '/update': 95000 };  // path -> the time we wait, ms
+const RELAY = { '/pools.json': 12000, '/update': 20000, '/health': 12000 };  // path -> the time we wait, ms
 const MACHINE_PREFIX = '/shopfinder';
 
 function json(obj, status) {

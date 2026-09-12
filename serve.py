@@ -4,8 +4,10 @@ serve.py: the Shop & Pool Finder's small server. Standard library only.
 
   GET {PREFIX}/            the app (public/index.html) and the files beside it
   GET {PREFIX}/pools.json  the hours update_pools.py wrote last (404 until the first run)
-  GET {PREFIX}/update      runs update_pools.py now and rewrites pools.json; a run younger than
-                           ten minutes is not repeated (the button is public behind pages.dev)
+  GET {PREFIX}/update      starts update_pools.py in the background and answers at once
+                           ({"started": true}); the page polls /health until "updated" changes.
+                           A run younger than ten minutes is not repeated ({"skipped": true}):
+                           the button is public behind pages.dev
   GET {PREFIX}/config.js   window.SF_CONFIG = {googleMapsKey} (env GOOGLE_MAPS_KEY or the file google_maps_key)
   GET {PREFIX}/health      {"ok": true, "pools_json": true, "age_min": 12}
 
@@ -48,6 +50,43 @@ def pools_age():
         return None
 
 
+def pools_updated():
+    """The moment pools.json was written, ISO, or None."""
+    try:
+        return time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(os.path.getmtime(POOLS_JSON)))
+    except OSError:
+        return None
+
+
+update_state = {"running": False, "started": None, "last_ok": None, "last_error": "", "last_log": ""}
+
+
+def health():
+    age = pools_age()
+    return {"ok": True, "pools_json": age is not None, "age_min": None if age is None else round(age / 60),
+            "updated": pools_updated(), "running": update_state["running"],
+            "last_ok": update_state["last_ok"], "last_error": update_state["last_error"]}
+
+
+def run_updater():
+    """update_pools.py in the background (a run is one to three minutes on Groq's free tier)."""
+    try:
+        env = dict(os.environ, SHOPFINDER_DATA=DATA_DIR)
+        proc = subprocess.run([sys.executable, UPDATER], cwd=HERE, env=env,
+                              capture_output=True, text=True, timeout=600)
+        ok = proc.returncode == 0
+        update_state["last_ok"] = ok
+        update_state["last_log"] = (proc.stdout + proc.stderr)[-4000:]
+        update_state["last_error"] = "" if ok else ("no Groq key on this machine" if proc.returncode == 2 else "update_pools.py failed")
+        sys.stderr.write(update_state["last_log"] + "\n")
+    except Exception as e:
+        update_state["last_ok"] = False
+        update_state["last_error"] = repr(e)
+    finally:
+        update_state["running"] = False
+        update_lock.release()
+
+
 def send_json(handler, code, obj):
     body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
     handler.send_response(code)
@@ -86,9 +125,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if path == "/config.js":
             return self.serve_config()
         if path == "/health":
-            age = pools_age()
-            return send_json(self, 200, {"ok": True, "pools_json": age is not None,
-                                         "age_min": None if age is None else round(age / 60)})
+            return send_json(self, 200, health())
         # the static files: SimpleHTTPRequestHandler reads self.path
         self.path = path
         return super().do_GET()
@@ -122,23 +159,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def handle_update(self):
+        """Start a run and answer at once; the page polls /health until "updated" changes."""
         age = pools_age()
-        if age is not None and age < UPDATE_MIN_AGE:
-            return send_json(self, 200, {"ok": True, "skipped": True, "age_min": round(age / 60)})
+        if age is not None and age < UPDATE_MIN_AGE and not update_state["running"]:
+            return send_json(self, 200, {"ok": True, "skipped": True, "age_min": round(age / 60), "updated": pools_updated()})
         if not update_lock.acquire(blocking=False):
-            return send_json(self, 200, {"ok": True, "skipped": True, "running": True, "age_min": None if age is None else round(age / 60)})
-        try:
-            env = dict(os.environ, SHOPFINDER_DATA=DATA_DIR)
-            proc = subprocess.run([sys.executable, UPDATER], cwd=HERE, env=env,
-                                  capture_output=True, text=True, timeout=170)
-            ok = proc.returncode == 0
-            log = (proc.stdout + proc.stderr)[-4000:]
-            error = "" if ok else ("no Groq key on this machine" if proc.returncode == 2 else "update_pools.py failed")
-            send_json(self, 200 if ok else 500, {"ok": ok, "error": error, "log": log})
-        except Exception as e:
-            send_json(self, 500, {"ok": False, "error": repr(e), "log": ""})
-        finally:
-            update_lock.release()
+            return send_json(self, 200, {"ok": True, "started": True, "running": True, "updated": pools_updated()})
+        update_state["running"] = True
+        update_state["started"] = time.time()
+        threading.Thread(target=run_updater, daemon=True).start()
+        return send_json(self, 200, {"ok": True, "started": True, "running": True, "updated": pools_updated()})
 
 
 class Server(socketserver.ThreadingTCPServer):

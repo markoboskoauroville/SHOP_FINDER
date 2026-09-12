@@ -664,9 +664,9 @@ function render() {
   wrap.innerHTML = "";
   const list = window._allPlaces || [];
   // "Today": Google knows the hours of nearly every shop, so only the open ones are shown; OSM shops
-  // without an opening_hours tag stay in the list as "hours unknown" instead of vanishing.
+  // without an opening_hours tag, and pools whose hours did not load, stay as "hours unknown".
   const show = openFilter === "open"
-    ? list.filter(s => provider === "google" || s.isPool ? s.openNow === true : s.openNow !== false)
+    ? list.filter(s => (provider === "google" && !s.isPool) ? s.openNow === true : s.openNow !== false)
     : list;
   lastShown = show;
   if (mapVisible) showOverview();
@@ -783,20 +783,37 @@ document.getElementById("radiusOk").addEventListener("click", () => {
 document.getElementById("mapsToggle").addEventListener("click", () => setProvider(provider === "google" ? "osm" : "google"));
 
 /* the pool refresh: /update on the same origin. On pages.dev the door relays it to the machine, where
-   serve.py runs update_pools.py and rewrites pools.json (a run younger than ten minutes is not
-   repeated; a timer refreshes every morning too). Then the pools are reloaded if shown. */
+   serve.py starts update_pools.py and answers at once; the page then polls /health until pools.json
+   is rewritten (a run younger than ten minutes is not repeated; a timer refreshes every morning too).
+   Then the pools are reloaded if shown. */
 document.getElementById("updateBtn").addEventListener("click", async () => {
   const btn = document.getElementById("updateBtn");
   btn.disabled = true;
   const original = btn.textContent;
   btn.textContent = "⏳";
   setStatus("Refreshing pool hours from the official site…");
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
   try {
     const r = await fetch("update", { cache: "no-store" });
     const data = await r.json().catch(() => ({ ok: r.ok, log: "" }));
-    if (data.ok) {
-      setStatus(data.skipped ? "Pool hours are fresh (updated " + (data.age_min == null ? "a moment" : data.age_min + " min") + " ago)." : "Pool hours updated.");
+    if (data.ok && data.skipped) {
+      setStatus("Pool hours are fresh (updated " + (data.age_min == null ? "a moment" : data.age_min + " min") + " ago).");
       if (activeBrands.has("pool")) run();
+    } else if (data.ok && data.started) {
+      // a run is one to three minutes on Groq's free tier: watch /health until pools.json is rewritten
+      const before = data.updated || null;
+      let done = false;
+      for (let i = 0; i < 48 && !done; i++) {
+        await sleep(5000);
+        setStatus("Reading the official pool pages… " + (5 * (i + 1)) + " s");
+        try {
+          const h = await (await fetch("health", { cache: "no-store" })).json();
+          if (h.updated && h.updated !== before) done = true;
+          else if (!h.running && h.last_error) { setStatus("Update failed on the machine: " + h.last_error); return; }
+        } catch (e) { /* the relay hiccuped, keep watching */ }
+      }
+      setStatus(done ? "Pool hours updated." : "Still updating on the machine; tap ↻ later to see the result.");
+      if (done && activeBrands.has("pool")) run();
     } else if (data.asleep) {
       setStatus("The machine is asleep: wake it at ttt-lll.pages.dev/machine, then tap ↻ again.");
     } else {
