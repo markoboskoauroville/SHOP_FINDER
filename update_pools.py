@@ -306,7 +306,7 @@ def main():
     now = datetime.datetime.now()
     today_iso = now.strftime("%Y-%m-%d")
     weekday_hr = DAYS_HR[(now.weekday() + 1) % 7]
-    is_holiday = today_iso in HOLIDAYS or now.weekday() >= 5
+    is_holiday = today_iso in HOLIDAYS      # the weekday name already says weekend; a weekend is not a holiday
 
     template_lines = fetch_template_lines()
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
