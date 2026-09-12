@@ -8,7 +8,13 @@ serve.py: the Shop & Pool Finder's small server. Standard library only.
                            ({"started": true}); the page polls /health until "updated" changes.
                            A run younger than ten minutes is not repeated ({"skipped": true}):
                            the button is public behind pages.dev
-  GET {PREFIX}/config.js   window.SF_CONFIG = {googleMapsKey} (env GOOGLE_MAPS_KEY or the file google_maps_key)
+  GET {PREFIX}/config.js   window.SF_CONFIG = {google, googleTiles}: whether the paid option exists here
+  GET {PREFIX}/places      ?q=&lat=&lng=&radius=&n=  Google Places text search, made HERE with the key
+                           (the file google_maps_key in the data folder, or env GOOGLE_MAPS_KEY); the key
+                           never reaches the page. Per-IP and daily limits (the address is public).
+  GET {PREFIX}/gtile/z/x/y.png  Google's map tiles through the Map Tiles API, made here too; when that API
+                           is not enabled on the key, config.js says googleTiles:false and the page keeps
+                           OpenStreetMap's tiles
   GET {PREFIX}/health      {"ok": true, "pools_json": true, "age_min": 12}
 
 On the Oracle machine (install.sh): HOST=127.0.0.1 PORT=8900 PREFIX=/shopfinder, behind Caddy,
@@ -20,6 +26,7 @@ pools.json and groq_key; default: this folder), UPDATE_MIN_AGE (minutes, default
 """
 
 import os
+import re
 import sys
 import json
 import time
@@ -28,6 +35,9 @@ import subprocess
 import http.server
 import socketserver
 import urllib.parse
+import urllib.request
+import urllib.error
+import collections
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PUBLIC = os.path.join(HERE, "public")
@@ -38,9 +48,115 @@ HOST = os.environ.get("HOST", "0.0.0.0")
 PORT = int(os.environ.get("PORT", "8080"))
 PREFIX = os.environ.get("PREFIX", "").rstrip("/")
 UPDATE_MIN_AGE = float(os.environ.get("UPDATE_MIN_AGE", "10")) * 60
+# the paid calls are public behind pages.dev: so many per address per ten minutes, so many a day
+LIMITS = {"places": (int(os.environ.get("PLACES_PER_10MIN", "40")), 600),
+          "gtile": (int(os.environ.get("TILES_PER_10MIN", "1500")), 600)}
+DAILY = {"places": int(os.environ.get("PLACES_DAILY_CAP", "600")),
+         "gtile": int(os.environ.get("TILES_DAILY_CAP", "15000"))}
+GOOGLE_TILE_STYLES = [
+    {"elementType": "geometry", "stylers": [{"color": "#1b1f27"}]},
+    {"elementType": "labels.text.fill", "stylers": [{"color": "#8b949e"}]},
+    {"elementType": "labels.text.stroke", "stylers": [{"color": "#0d1117"}]},
+    {"featureType": "road", "elementType": "geometry", "stylers": [{"color": "#2a2f3a"}]},
+    {"featureType": "water", "elementType": "geometry", "stylers": [{"color": "#0d1117"}]},
+    {"featureType": "poi", "stylers": [{"visibility": "off"}]},
+]
 
 update_lock = threading.Lock()
+limit_lock = threading.Lock()
+hits = collections.defaultdict(collections.deque)     # (kind, ip) -> times
+daily = {"day": "", "places": 0, "gtile": 0}
+tiles_session = {"session": None, "expiry": 0, "checked": 0, "ok": False}
 
+
+def google_key():
+    key = (os.environ.get("GOOGLE_MAPS_KEY") or "").strip()
+    if key:
+        return key
+    try:
+        with open(os.path.join(DATA_DIR, "google_maps_key"), encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def allowed(kind, ip):
+    """One call more for this address and this day, or not."""
+    now = time.time()
+    per, window = LIMITS[kind]
+    with limit_lock:
+        today = time.strftime("%Y-%m-%d")
+        if daily["day"] != today:
+            daily.update(day=today, places=0, gtile=0)
+        if daily[kind] >= DAILY[kind]:
+            return False, "today's %s allowance on the machine is used up" % kind
+        q = hits[(kind, ip)]
+        while q and q[0] < now - window:
+            q.popleft()
+        if len(q) >= per:
+            return False, "too many %s calls from this address, wait a few minutes" % kind
+        q.append(now)
+        daily[kind] += 1
+        return True, ""
+
+
+def google_places(q, lat, lng, radius, n):
+    """Places API (New) text search, the compact shape the page needs."""
+    payload = json.dumps({
+        "textQuery": q, "languageCode": "en",
+        "locationBias": {"circle": {"center": {"latitude": lat, "longitude": lng}, "radius": radius}},
+        "maxResultCount": n, "rankPreference": "DISTANCE",
+    }).encode("utf-8")
+    req = urllib.request.Request("https://places.googleapis.com/v1/places:searchText", data=payload, headers={
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": google_key(),
+        "X-Goog-FieldMask": "places.id,places.displayName,places.formattedAddress,places.location,"
+                            "places.currentOpeningHours.openNow,places.currentOpeningHours.weekdayDescriptions,places.googleMapsUri",
+        "User-Agent": "shopfinder/1.0",
+    })
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    out = []
+    for p in data.get("places", []):
+        oh = p.get("currentOpeningHours") or {}
+        loc = p.get("location") or {}
+        out.append({
+            "id": p.get("id"), "name": (p.get("displayName") or {}).get("text"),
+            "addr": p.get("formattedAddress", ""), "lat": loc.get("latitude"), "lng": loc.get("longitude"),
+            "openNow": oh.get("openNow"), "weekday": oh.get("weekdayDescriptions") or [],
+            "mapsUri": p.get("googleMapsUri"),
+        })
+    return out
+
+
+def google_tiles_session():
+    """A Map Tiles API session for the dark roadmap, kept until it expires; False when the API is
+    not enabled on the key (checked again after an hour)."""
+    now = time.time()
+    with limit_lock:
+        if tiles_session["session"] and tiles_session["expiry"] > now + 60:
+            return tiles_session["session"]
+        if not tiles_session["ok"] and now - tiles_session["checked"] < 3600:
+            return None
+        tiles_session["checked"] = now
+    key = google_key()
+    if not key:
+        return None
+    try:
+        payload = json.dumps({"mapType": "roadmap", "language": "en-GB", "region": "HR",
+                              "styles": GOOGLE_TILE_STYLES}).encode("utf-8")
+        req = urllib.request.Request("https://tile.googleapis.com/v1/createSession?key=" + key, data=payload,
+                                     headers={"Content-Type": "application/json", "User-Agent": "shopfinder/1.0"})
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        with limit_lock:
+            tiles_session.update(session=data["session"], expiry=float(data.get("expiry", now + 3600)), ok=True)
+        return data["session"]
+    except Exception as e:
+        sys.stderr.write("map tiles session not created (the Map Tiles API off on the key?): %s\n" % repr(e)[:200])
+        with limit_lock:
+            tiles_session.update(session=None, ok=False)
+        return None
 
 def pools_age():
     """Seconds since pools.json was written, or None."""
@@ -124,27 +240,82 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self.handle_update()
         if path == "/config.js":
             return self.serve_config()
+        if path == "/places":
+            return self.serve_places()
+        if path.startswith("/gtile/"):
+            return self.serve_tile(path)
         if path == "/health":
             return send_json(self, 200, health())
         # the static files: SimpleHTTPRequestHandler reads self.path
         self.path = path
         return super().do_GET()
 
+    def client_ip(self):
+        h = self.headers
+        return (h.get("X-Client-IP") or (h.get("X-Forwarded-For") or "").split(",")[0].strip() or self.client_address[0])
+
     def serve_config(self):
-        """The paid option's Google key: env GOOGLE_MAPS_KEY, or the file google_maps_key in the data folder."""
-        key = (os.environ.get("GOOGLE_MAPS_KEY") or "").strip()
-        if not key:
-            try:
-                with open(os.path.join(DATA_DIR, "google_maps_key"), encoding="utf-8") as f:
-                    key = f.read().strip()
-            except OSError:
-                key = ""
-        body = ("window.SF_CONFIG = " + json.dumps({"googleMapsKey": key}) + ";").encode("utf-8")
+        """Whether the paid option exists on this machine. Never the key."""
+        has_key = bool(google_key())
+        body = ("window.SF_CONFIG = " + json.dumps({
+            "google": has_key, "googleTiles": bool(has_key and google_tiles_session())}) + ";").encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/javascript; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def serve_places(self):
+        if not google_key():
+            return send_json(self, 503, {"ok": False, "error": "no Google key on the machine"})
+        qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        try:
+            q = qs.get("q", [""])[0].strip()[:120]
+            lat = float(qs.get("lat", ["45.8131"])[0]); lng = float(qs.get("lng", ["15.9775"])[0])
+            radius = min(max(float(qs.get("radius", ["3000"])[0]), 50.0), 50000.0)
+            n = min(max(int(qs.get("n", ["20"])[0]), 1), 20)
+        except ValueError:
+            return send_json(self, 400, {"ok": False, "error": "bad query"})
+        if not q:
+            return send_json(self, 400, {"ok": False, "error": "q missing"})
+        ok, why = allowed("places", self.client_ip())
+        if not ok:
+            return send_json(self, 429, {"ok": False, "error": why})
+        try:
+            return send_json(self, 200, {"ok": True, "places": google_places(q, lat, lng, radius, n)})
+        except urllib.error.HTTPError as e:
+            body = e.read().decode("utf-8", "ignore")[:300]
+            sys.stderr.write("places %s: %s\n" % (e.code, body))
+            return send_json(self, 502, {"ok": False, "error": "Google answered %d (the key's restrictions?)" % e.code})
+        except Exception as e:
+            return send_json(self, 502, {"ok": False, "error": "Google not reached: " + repr(e)[:120]})
+
+    def serve_tile(self, path):
+        m = re.match(r"^/gtile/(\d{1,2})/(\d+)/(\d+)\.png$", path)
+        if not m:
+            return self.send_error(404, "tile?")
+        session = google_tiles_session()
+        if not session:
+            return self.send_error(503, "no Google tiles on this machine")
+        ok, why = allowed("gtile", self.client_ip())
+        if not ok:
+            return self.send_error(429, why)
+        z, x, y = m.groups()
+        url = "https://tile.googleapis.com/v1/2dtiles/%s/%s/%s?session=%s&key=%s" % (z, x, y, session, google_key())
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "shopfinder/1.0"}), timeout=20) as resp:
+                data = resp.read()
+                ctype = resp.headers.get("Content-Type", "image/png")
+        except urllib.error.HTTPError as e:
+            return self.send_error(502, "Google tile %d" % e.code)
+        except Exception:
+            return self.send_error(502, "Google tile not reached")
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "private, max-age=1800")
+        self.end_headers()
+        self.wfile.write(data)
 
     def serve_pools(self):
         try:

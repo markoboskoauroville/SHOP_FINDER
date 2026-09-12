@@ -76,7 +76,7 @@
   .toggle.paid { border-color: #f0883e; color: #f0883e; background: rgba(240,136,62,0.10); }
   /* Leaflet (the free map) in the same dark look */
   .leaflet-container { background: #1b1f27; font-family: inherit; overflow: hidden; position: relative; }
-  .leaflet-tile-pane { filter: brightness(0.6) invert(1) contrast(3) hue-rotate(200deg) saturate(0.3) brightness(0.7); }
+  #map.osm-tiles .leaflet-tile-pane { filter: brightness(0.6) invert(1) contrast(3) hue-rotate(200deg) saturate(0.3) brightness(0.7); }
   .leaflet-control-attribution { background: rgba(13,17,23,0.85) !important; color: var(--muted) !important; font-size: 10px; }
   .leaflet-control-attribution a { color: var(--cyan) !important; }
   .leaflet-bar a { background: var(--card) !important; color: var(--text) !important; border-color: var(--border) !important; }
@@ -126,8 +126,9 @@
    TWO MAP OPTIONS, Marko's rule: "always a free option and a paid option".
      free  = OpenStreetMap: OSM tiles (Leaflet), Overpass for the shops and their opening_hours,
              OSRM (routing.openstreetmap.de) for the walking route. No key, no bill.
-     paid  = Google Maps Platform: Places API (text search) for the shops and the pools' Google
-             hours, Maps JavaScript API for the map. Every call is billed to API_KEY.
+     paid  = Google Maps Platform through the machine: Places API (text search) for the shops and
+             the pools' Google hours, and Google's map tiles when the Map Tiles API is enabled
+             (else the OSM tiles). Every call is billed to the key, which lives on the machine.
    The choice is the toggle next to "Today"; it is remembered; free is the default.
 
    POOLS: the eight Zagreb city pools. Their hours come from pools.json on the same origin
@@ -135,11 +136,11 @@
    Without pools.json: Google hours in paid mode, "hours unknown" plus the official link in free mode.
    ===================================================================================== */
 
-/* the PAID key: a Google Maps Platform browser key, served as config.js by the pages.dev
-   function (the Pages secret GOOGLE_MAPS_KEY) or by serve.py (env GOOGLE_MAPS_KEY, or the file
-   google_maps_key in the data folder). Never in the repo. A browser sees it, so restrict it to
-   this app's domains (HTTP referrers) in the Google Cloud console. Without it: free mode only. */
-const API_KEY = (window.SF_CONFIG && window.SF_CONFIG.googleMapsKey) || "";
+/* no key in the page, ever (Marko, 12.9.2026: "the secrets are living on my server, not in the web
+   page"). config.js, answered by the machine, only says whether the paid option exists there:
+   { google: true|false, googleTiles: true|false }. The Google calls are made by serve.py on the
+   machine (places?..., gtile/...); the page talks to its own origin only. */
+const CONFIG = Object.assign({ google: false, googleTiles: false }, window.SF_CONFIG || {});
 
 const OSM_TILES = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
 const OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter"];
@@ -148,11 +149,6 @@ const OSRM_FOOT = "https://routing.openstreetmap.de/routed-foot/route/v1/foot/";
 const ZAGREB = { lat: 45.8131, lng: 15.9775 };
 
 let provider = "osm";        // "osm" (free) | "google" (paid)
-let mapAuthError = null;
-window.gm_authFailure = function () {
-  mapAuthError = "Google Maps rejected this key/page (gm_authFailure).";
-  setStatus("Map error: " + mapAuthError + " Switch to OSM (free).");
-};
 
 let userPos = null;
 let lastShown = [];
@@ -172,7 +168,7 @@ function loadPrefs() {
   if (o === "open" || o === "all") openFilter = o;
   const m = localStorage.getItem("sf_maps");
   if (m === "google" || m === "osm") provider = m;
-  if (provider === "google" && !API_KEY) provider = "osm";
+  if (provider === "google" && !CONFIG.google) provider = "osm";
 }
 function savePills() { localStorage.setItem("sf_pills", JSON.stringify([...activeBrands])); }
 function saveRadius() { localStorage.setItem("sf_radius", document.getElementById("radiusKm").value); }
@@ -341,7 +337,7 @@ async function overpassSearch(brandKey, center, radius) {
   throw lastErr || new Error("Overpass unavailable");
 }
 
-/* ---------- the shops, paid: Google Places ---------- */
+/* ---------- the shops, paid: Google Places, through the machine ---------- */
 function hoursToday(descs) {
   if (!descs || !descs.length) return null;
   const name = EN_DAYS[new Date().getDay()].toLowerCase();
@@ -378,64 +374,33 @@ function nextOpen(descs) {
   }
   return null;
 }
+/* the page asks its own origin (places?...); serve.py on the machine holds the key and calls Google */
+async function placesQuery(q, center, radius, n) {
+  const u = "places?q=" + encodeURIComponent(q) + "&lat=" + center.lat + "&lng=" + center.lng + "&radius=" + Math.round(radius) + "&n=" + n;
+  const res = await fetch(u, { cache: "no-store" });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || ("Places " + res.status));
+  return data.places || [];
+}
 async function placesSearch(q, brandKey, center, radius) {
-  const res = await fetch("https://places.googleapis.com/v1/places:searchText", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Goog-Api-Key": API_KEY,
-      "X-Goog-FieldMask": "places.displayName,places.formattedAddress,places.location,places.currentOpeningHours.openNow,places.currentOpeningHours.weekdayDescriptions,places.googleMapsUri,places.id"
-    },
-    body: JSON.stringify({
-      textQuery: q, languageCode: "en",
-      locationBias: { circle: { center: { latitude: center.lat, longitude: center.lng }, radius: radius } },
-      maxResultCount: 20, rankPreference: "DISTANCE"
-    })
-  });
-  if (!res.ok) throw new Error("Places API error " + res.status);
-  const data = await res.json();
-  return (data.places || []).map(p => ({
-    id: p.id,
-    name: p.displayName ? p.displayName.text : "Store",
-    addr: p.formattedAddress || "",
-    lat: p.location.latitude, lng: p.location.longitude,
-    openNow: p.currentOpeningHours ? p.currentOpeningHours.openNow : undefined,
-    todayHours: p.currentOpeningHours ? hoursToday(p.currentOpeningHours.weekdayDescriptions) : null,
-    nextOpen: p.currentOpeningHours ? nextOpen(p.currentOpeningHours.weekdayDescriptions) : null,
-    mapsUri: p.googleMapsUri || gmapsDir(p.location.latitude, p.location.longitude),
-    brand: brandKey, isPool: false
+  return (await placesQuery(q, center, radius, 20)).map(p => ({
+    id: p.id, name: p.name || "Store", addr: p.addr || "", lat: p.lat, lng: p.lng,
+    openNow: p.openNow === true ? true : (p.openNow === false ? false : undefined),
+    todayHours: hoursToday(p.weekday), nextOpen: nextOpen(p.weekday),
+    mapsUri: p.mapsUri || gmapsDir(p.lat, p.lng), brand: brandKey, isPool: false
   }));
 }
 
 /* ---------- the pools ---------- */
-async function poolLive(pool) {   // paid: one Places text search per pool
+async function poolLive(pool) {   // paid: one Places text search per pool, through the machine
   const fallback = { openNow: undefined, todayHours: null, mapsUri: null };
   try {
-    const res = await fetch("https://places.googleapis.com/v1/places:searchText", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Goog-Api-Key": API_KEY,
-        "X-Goog-FieldMask": "places.location,places.currentOpeningHours.openNow,places.currentOpeningHours.weekdayDescriptions,places.googleMapsUri"
-      },
-      body: JSON.stringify({
-        textQuery: pool.query, languageCode: "en",
-        locationBias: { circle: { center: { latitude: pool.lat, longitude: pool.lng }, radius: 700 } },
-        maxResultCount: 5, rankPreference: "DISTANCE"
-      })
-    });
-    if (!res.ok) return fallback;
-    const data = await res.json();
-    const cands = (data.places || [])
-      .map(p => ({ p, d: distMeters({ lat: pool.lat, lng: pool.lng }, { lat: p.location.latitude, lng: p.location.longitude }) }))
-      .filter(x => x.d <= 600).sort((a, b) => a.d - b.d);
+    const cands = (await placesQuery(pool.query, pool, 700, 5))
+      .map(p => ({ p, d: distMeters(pool, p) })).filter(x => x.d <= 600).sort((a, b) => a.d - b.d);
     if (!cands.length) return fallback;
     const p = cands[0].p;
-    return {
-      openNow: p.currentOpeningHours ? p.currentOpeningHours.openNow : undefined,
-      todayHours: p.currentOpeningHours ? hoursToday(p.currentOpeningHours.weekdayDescriptions) : null,
-      mapsUri: p.googleMapsUri || null
-    };
+    return { openNow: p.openNow === true ? true : (p.openNow === false ? false : undefined),
+             todayHours: hoursToday(p.weekday), mapsUri: p.mapsUri || null };
   } catch (e) { return fallback; }
 }
 function poolPlace(p, live, updated, notice) {
@@ -464,25 +429,12 @@ async function fetchPools() {
   } catch (e) { /* no pools.json here: the machine asleep, or a file:// page */ }
   if (provider === "google") return Promise.all(POOLS.map(async p => poolPlace(p, await poolLive(p), null, "")));
   return POOLS.map(p => poolPlace(p, { openNow: undefined, todayHours: null, mapsUri: null }, null,
-    "Hours not loaded (the machine is asleep or offline): see the official schedule, or switch to Google (paid)."));
+    "Hours not loaded (the machine is asleep or offline): see the official schedule."));
 }
 
-/* ---------- the map: one small engine per provider ---------- */
-let gmap = null, lmap = null, userMarker = null, storeMarkers = [], routeLine = null, routeMarkers = [];
-let _gPromise = null, _lPromise = null;
-function loadGoogle() {
-  if (window.google && window.google.maps && window.google.maps.Map) return Promise.resolve();
-  if (_gPromise) return _gPromise;
-  _gPromise = new Promise((resolve, reject) => {
-    window.__mapsReady = function () { resolve(); };
-    const s = document.createElement("script");
-    s.src = "https://maps.googleapis.com/maps/api/js?key=" + API_KEY + "&v=weekly&callback=__mapsReady";
-    s.async = true;
-    s.onerror = () => reject(new Error("the Maps JavaScript API did not load"));
-    document.head.appendChild(s);
-  });
-  return _gPromise;
-}
+/* ---------- the map: Leaflet; the tiles change with the provider ---------- */
+let lmap = null, tileLayer = null, userMarker = null, storeMarkers = [], routeLine = null, routeMarkers = [];
+let _lPromise = null;
 function loadLeaflet() {
   if (window.L) return Promise.resolve();
   if (_lPromise) return _lPromise;
@@ -501,62 +453,37 @@ function loadLeaflet() {
   _lPromise = Promise.all([cssReady, jsReady]).then(() => {});
   return _lPromise;
 }
+/* the tiles: OpenStreetMap, or Google's through the machine (gtile/{z}/{x}/{y}.png, the key never
+   leaves it) when the paid option is on and the machine reports the Map Tiles API works */
+const googleTilesOn = () => provider === "google" && CONFIG.googleTiles;
+function tileLayerFor() {
+  if (googleTilesOn()) return L.tileLayer("gtile/{z}/{x}/{y}.png", { maxZoom: 20, attribution: "Map data &copy; Google" });
+  return L.tileLayer(OSM_TILES, { maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' });
+}
 const ENGINE = {
-  osm: {
-    async ensure() {
-      await loadLeaflet();
-      if (!lmap) {
-        const c = userPos || ZAGREB;
-        lmap = L.map("map", { zoomControl: true }).setView([c.lat, c.lng], 13);
-        L.tileLayer(OSM_TILES, { maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' }).addTo(lmap);
-      }
-    },
-    shown() { if (lmap) { lmap.invalidateSize(); setTimeout(() => lmap.invalidateSize(), 80); } },   // the box was display:none until now; measure before any fit
-    marker(p, label, title, onClick) {
-      const mk = L.marker([p.lat, p.lng], { title, icon: L.divIcon({ className: "", html: '<div class="lpin"><span>' + label + '</span></div>', iconSize: [26, 26], iconAnchor: [13, 13] }) }).addTo(lmap);
-      if (onClick) mk.on("click", onClick);
-      return mk;
-    },
-    you(p, r) { return L.circleMarker([p.lat, p.lng], { radius: r, color: "#fff", weight: 2, fillColor: "#39d0d8", fillOpacity: 1 }).addTo(lmap); },
-    line(path) { return L.polyline(path.map(q => [q.lat, q.lng]), { color: "#39d0d8", weight: 5, opacity: 0.9 }).addTo(lmap); },
-    remove(o) { if (o && lmap) lmap.removeLayer(o); },
-    fit(pts, pad) { if (pts.length) lmap.fitBounds(L.latLngBounds(pts.map(q => [q.lat, q.lng])), { padding: [pad, pad] }); },
-    view(p, z) { lmap.setView([p.lat, p.lng], z); },
-    destroy() { if (lmap) { lmap.remove(); lmap = null; } }
+  async ensure() {
+    await loadLeaflet();
+    if (!lmap) {
+      const c = userPos || ZAGREB;
+      lmap = L.map("map", { zoomControl: true }).setView([c.lat, c.lng], 13);
+      tileLayer = tileLayerFor().addTo(lmap);
+    }
+    document.getElementById("map").classList.toggle("osm-tiles", !googleTilesOn());   // the dark filter is for OSM's tiles
   },
-  google: {
-    async ensure() {
-      await loadGoogle();
-      if (!gmap) {
-        gmap = new google.maps.Map(document.getElementById("map"), {
-          center: userPos || ZAGREB, zoom: 13,
-          styles: [
-            { elementType: "geometry", stylers: [{ color: "#1b1f27" }] },
-            { elementType: "labels.text.fill", stylers: [{ color: "#8b949e" }] },
-            { elementType: "labels.text.stroke", stylers: [{ color: "#0d1117" }] },
-            { featureType: "road", elementType: "geometry", stylers: [{ color: "#2a2f3a" }] },
-            { featureType: "water", elementType: "geometry", stylers: [{ color: "#0d1117" }] },
-            { featureType: "poi", stylers: [{ visibility: "off" }] }
-          ],
-          disableDefaultUI: true, zoomControl: true
-        });
-      }
-    },
-    shown() {},
-    marker(p, label, title, onClick) {
-      const mk = new google.maps.Marker({ position: p, map: gmap, title, label: { text: label, color: "#fff", fontWeight: "bold" } });
-      if (onClick) mk.addListener("click", onClick);
-      return mk;
-    },
-    you(p, r) { return new google.maps.Marker({ position: p, map: gmap, title: "You", icon: { path: google.maps.SymbolPath.CIRCLE, scale: r, fillColor: "#39d0d8", fillOpacity: 1, strokeColor: "#fff", strokeWeight: 2 } }); },
-    line(path) { return new google.maps.Polyline({ path, map: gmap, strokeColor: "#39d0d8", strokeWeight: 5, strokeOpacity: 0.9 }); },
-    remove(o) { if (o) o.setMap(null); },
-    fit(pts, pad) { if (!pts.length) return; const b = new google.maps.LatLngBounds(); pts.forEach(q => b.extend(q)); gmap.fitBounds(b, pad); },
-    view(p, z) { gmap.setCenter(p); gmap.setZoom(z); },
-    destroy() { gmap = null; document.getElementById("map").innerHTML = ""; }
-  }
+  shown() { if (lmap) { lmap.invalidateSize(); setTimeout(() => lmap.invalidateSize(), 80); } },   // the box was display:none until now; measure before any fit
+  marker(p, label, title, onClick) {
+    const mk = L.marker([p.lat, p.lng], { title, icon: L.divIcon({ className: "", html: '<div class="lpin"><span>' + label + '</span></div>', iconSize: [26, 26], iconAnchor: [13, 13] }) }).addTo(lmap);
+    if (onClick) mk.on("click", onClick);
+    return mk;
+  },
+  you(p, r) { return L.circleMarker([p.lat, p.lng], { radius: r, color: "#fff", weight: 2, fillColor: "#39d0d8", fillOpacity: 1 }).addTo(lmap); },
+  line(path) { return L.polyline(path.map(q => [q.lat, q.lng]), { color: "#39d0d8", weight: 5, opacity: 0.9 }).addTo(lmap); },
+  remove(o) { if (o && lmap) lmap.removeLayer(o); },
+  fit(pts, pad) { if (pts.length) lmap.fitBounds(L.latLngBounds(pts.map(q => [q.lat, q.lng])), { padding: [pad, pad] }); },
+  view(p, z) { lmap.setView([p.lat, p.lng], z); },
+  destroy() { if (lmap) { lmap.remove(); lmap = null; tileLayer = null; } }
 };
-const eng = () => ENGINE[provider];
+const eng = () => ENGINE;
 
 function clearMarkers() { storeMarkers.forEach(m => eng().remove(m)); storeMarkers = []; }
 function clearRoute() {
@@ -645,16 +572,16 @@ async function showRouteTo(place) {
 function paintProvider() {
   const t = document.getElementById("mapsToggle");
   const paid = provider === "google";
-  t.textContent = paid ? "Google · paid" : (API_KEY ? "OSM · free" : "OSM · free (no Google key)");
+  t.textContent = paid ? (CONFIG.googleTiles ? "Google · paid" : "Google data · paid") : (CONFIG.google ? "OSM · free" : "OSM · free (no Google key on the machine)");
   t.classList.toggle("paid", paid);
   t.classList.toggle("free", !paid);
   t.title = paid
-    ? "Google Maps Platform: every search and map load is billed to the key. Tap for OpenStreetMap, free."
+    ? "Google through the machine: every search" + (CONFIG.googleTiles ? " and map load" : "") + " is billed to the key there. Tap for OpenStreetMap, free."
     : "OpenStreetMap, free: Overpass finds the shops, OSRM walks. Tap for Google Maps, paid.";
 }
 function setProvider(p) {
   if (p === provider) return;
-  if (p === "google" && !API_KEY) { setStatus("No Google key on this server: the free OpenStreetMap option only."); return; }
+  if (p === "google" && !CONFIG.google) { setStatus(CONFIG.asleep ? "The machine is asleep, so the paid option is not available now; the free one works." : "No Google key on the machine: the free OpenStreetMap option only."); return; }
   clearMarkers(); clearRoute(); eng().remove(userMarker); userMarker = null;
   eng().destroy();
   provider = p;
@@ -749,7 +676,7 @@ async function run() {
         for (const key of STORE_KEYS) {
           if (!activeBrands.has(key)) continue;
           if (provider === "google") {
-            for (const q of BRANDS[key].queries) tasks.push(placesSearch(q, key, userPos, radius).catch(() => []));
+            for (const q of BRANDS[key].queries) tasks.push(placesSearch(q, key, userPos, radius).catch(e => { note = "Google search through the machine failed (" + e.message + ").";  return []; }));
           } else {
             tasks.push(overpassSearch(key, userPos, radius).catch(e => { note = "OpenStreetMap search failed (" + e.message + "), try again in a moment."; return []; }));
           }

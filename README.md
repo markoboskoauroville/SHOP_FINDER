@@ -9,11 +9,11 @@ official pool pages every morning.
 
 | | free: **OSM** (default) | paid: **Google** |
 |---|---|---|
-| map | OpenStreetMap tiles, Leaflet | Maps JavaScript API |
-| the shops and their hours | Overpass API, the `opening_hours` tag | Places API text search |
+| map | OpenStreetMap tiles, Leaflet | Google's tiles through the machine (Map Tiles API), else OSM tiles |
+| the shops and their hours | Overpass API, the `opening_hours` tag | Places API text search, made by the machine |
 | pool hours without pools.json | not loaded, the official link | Places API |
 | walking route | OSRM on OpenStreetMap | OSRM on OpenStreetMap |
-| bill | nothing | every call against the key (config.js, from a Pages secret) |
+| bill | nothing | every call against the key, which lives on the machine only |
 
 **The pools** (Upravljanje sportskim objektima, links checked 12.9.2026): Bazen Špansko (opened
 9.9.2026, west), Bazeni Mladost outdoor, Zimsko plivalište Mladost, Utrina, Šalata, Svetice, Jelkovec,
@@ -23,13 +23,14 @@ Iver. The list is in `public/index.html` and again in `update_pools.py`; change 
 
     public/index.html        the app, one file, no build
     public/_headers          no-store for pools.json and /update on Pages
-    (config.js)              not a file: the Pages Function or serve.py answers it with the Google key
-    functions/_middleware.js the Pages Function: relays /pools.json and /update to the machine with the door key
-    serve.py                 the server: the page, pools.json, /update, /health; standard library
+    (config.js)              not a file: serve.py answers it with {google, googleTiles}, never a key
+    functions/_middleware.js the Pages Function: relays the data addresses to the machine; no secret in it
+    serve.py                 the server: the page, pools.json, /update, /health, /places and /gtile (Google, with
+                             the key on the machine), /config.js; standard library
     update_pools.py          the official pages through Groq -> pools.json (key: SHOPFINDER_DATA/groq_key)
     install.sh               ON the machine: shopfinder.service (:8900, /shopfinder), the GitHub updater
                              every minute, the pool timer at 06:15 Zagreb
-    deploy.sh                from the Mac: the Pages project and its secrets, the Groq key to the machine
+    deploy.sh                from the Mac: the Pages deploy; `key` puts the Groq and Google keys on the machine
     shopfinder-v1.sh         the Termux menu for a phone (start, stop, log, boot)
     HANDOVER.md              the whole story: where it runs, the secrets, what is paid, what was decided
 
@@ -37,6 +38,9 @@ Iver. The list is in `public/index.html` and again in `update_pools.py`; change 
 
     python3 serve.py            # http://localhost:8080
     python3 update_pools.py     # writes pools.json next to it (needs a Groq key, see the handover)
+
+The keys live on the machine (`~/.shopfinder/groq_key`, `google_maps_key`), never in the page, the
+repo, or Cloudflare. `bash deploy.sh key` puts them there from the Mac.
 
 ## Deploy
 
