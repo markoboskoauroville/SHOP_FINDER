@@ -1,0 +1,841 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Store & Pool Finder</title>
+<style>
+  :root {
+    --bg: #0d1117; --card: #161b22; --border: #30363d;
+    --text: #e6edf3; --muted: #8b949e; --accent: #a371f7; --cyan: #39d0d8;
+    --open: #3fb950; --closed: #f85149; --pool: #38bdf8;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, system-ui, Roboto, sans-serif; background: var(--bg); color: var(--text); padding: 16px; }
+  h1 { font-size: 1.4rem; margin: 0 0 4px; color: var(--accent); }
+  .sub { color: var(--muted); font-size: 0.85rem; margin-bottom: 16px; }
+
+  .pills { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+  .pill { border: 1px solid var(--border); background: var(--card); color: var(--muted); padding: 7px 15px; border-radius: 20px; font-size: 0.88rem; cursor: pointer; user-select: none; font-weight: 600; }
+  .pill.active { border-color: var(--cyan); color: var(--cyan); background: rgba(57,208,216,0.08); }
+  .pill[data-brand="pool"].active { border-color: var(--pool); color: var(--pool); background: rgba(56,189,248,0.10); }
+
+  .toggle-row { display: flex; gap: 8px; margin-bottom: 14px; }
+  .toggle { border: 1px solid var(--border); background: var(--card); color: var(--muted); padding: 6px 14px; border-radius: 20px; font-size: 0.85rem; cursor: pointer; user-select: none; }
+  .toggle.active { border-color: var(--accent); color: var(--accent); background: rgba(163,113,247,0.08); }
+
+  .controls { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; align-items: center; }
+  button { background: var(--accent); color: #fff; border: none; padding: 10px 16px; border-radius: 8px; font-size: 0.95rem; font-weight: 600; cursor: pointer; }
+  button:disabled { opacity: 0.5; }
+  button.ghost { background: var(--card); color: var(--cyan); border: 1px solid var(--cyan); }
+  #brandPills #updateBtn { padding: 7px 13px; border-radius: 20px; font-size: 1rem; line-height: 1; margin-left: 2px; }
+  button.okpill { background: var(--cyan); color: #06262a; border: none; padding: 9px 18px; border-radius: 20px; font-weight: 700; }
+  .radius-field { color: var(--muted); font-size: 0.85rem; display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .radius-field input { width: 72px; background: var(--card); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 9px 10px; font-size: 0.95rem; }
+  .rho { font-size: 1.2rem; font-style: italic; color: var(--cyan); font-weight: 700; }
+  .hint { color: var(--muted); font-size: 0.74rem; margin: 0 0 14px; }
+
+  #mapWrap { display: none; margin-bottom: 16px; }
+  #routeInfo { display: none; background: var(--card); border: 1px solid var(--cyan); border-radius: 10px 10px 0 0; padding: 10px 12px; font-size: 0.88rem; color: var(--text); }
+  #routeInfo b { color: var(--cyan); }
+  #map { width: 100%; height: 320px; border-radius: 0 0 12px 12px; background: var(--card); border: 1px solid var(--border); border-top: none; }
+  #map.no-route { border-radius: 12px; border-top: 1px solid var(--border); }
+
+  #status { color: var(--muted); font-size: 0.9rem; margin-bottom: 12px; }
+  .notice { background: rgba(248,81,73,0.08); border: 1px solid rgba(248,81,73,0.3); color: #ffb3ae; border-radius: 12px; padding: 14px; margin-bottom: 12px; font-size: 0.92rem; }
+
+  .store { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px; margin-bottom: 10px; cursor: pointer; transition: border-color .15s; }
+  .store:hover { border-color: var(--cyan); }
+  .store.pool:hover { border-color: var(--pool); }
+  .store-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .store-name { font-weight: 700; font-size: 1.05rem; }
+  .dist { color: var(--cyan); font-size: 0.85rem; white-space: nowrap; }
+  .store-addr { color: var(--muted); font-size: 0.85rem; margin: 4px 0 8px; }
+  .badge { font-size: 0.78rem; font-weight: 600; padding: 2px 8px; border-radius: 12px; display: inline-block; margin-bottom: 8px; }
+  .badge.open { background: rgba(63,185,80,0.15); color: var(--open); }
+  .badge.closed { background: rgba(248,81,73,0.15); color: var(--closed); }
+  .badge.unknown { background: rgba(139,148,158,0.15); color: var(--muted); }
+  .nextopen { font-size: 0.78rem; font-weight: 600; color: var(--open); }
+  .hours { font-size: 0.86rem; color: var(--text); margin: 2px 0 8px; }
+  .hours .lbl { color: var(--muted); }
+  .alert { background: rgba(210,153,34,0.12); border: 1px solid rgba(210,153,34,0.4); color: #e3b341; border-radius: 8px; padding: 8px 10px; font-size: 0.8rem; margin: 0 0 8px; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .maplink { display: inline-block; color: var(--cyan); text-decoration: none; font-size: 0.88rem; font-weight: 600; border: 1px solid var(--cyan); padding: 7px 12px; border-radius: 8px; }
+  .maplink.transit { color: var(--open); border-color: var(--open); }
+  .navhint { font-size: 0.78rem; color: var(--muted); }
+  .official { color: var(--pool); font-size: 0.82rem; text-decoration: none; }
+  .brand-tag { font-size: 0.72rem; padding: 1px 7px; border-radius: 10px; margin-left: 8px; vertical-align: middle; font-weight: 600; }
+  .brand-spar { background: rgba(227,30,36,0.15); color: #ff6b6b; }
+  .brand-dm { background: rgba(0,144,209,0.15); color: #4cb8e8; }
+  .brand-bio { background: rgba(63,185,80,0.15); color: #5fd676; }
+  .brand-mlinar { background: rgba(214,158,46,0.15); color: #e0b54a; }
+  .brand-mall { background: rgba(163,113,247,0.15); color: #a371f7; }
+  .brand-pool { background: rgba(56,189,248,0.15); color: var(--pool); }
+  /* the map switch: free (OpenStreetMap) green, paid (Google) orange */
+  .toggle.free { border-color: var(--open); color: var(--open); background: rgba(63,185,80,0.08); }
+  .toggle.paid { border-color: #f0883e; color: #f0883e; background: rgba(240,136,62,0.10); }
+  /* Leaflet (the free map) in the same dark look */
+  .leaflet-container { background: #1b1f27; font-family: inherit; }
+  .leaflet-tile-pane { filter: brightness(0.6) invert(1) contrast(3) hue-rotate(200deg) saturate(0.3) brightness(0.7); }
+  .leaflet-control-attribution { background: rgba(13,17,23,0.85) !important; color: var(--muted) !important; font-size: 10px; }
+  .leaflet-control-attribution a { color: var(--cyan) !important; }
+  .leaflet-bar a { background: var(--card) !important; color: var(--text) !important; border-color: var(--border) !important; }
+  .lpin { width: 26px; height: 26px; border-radius: 50%; background: var(--accent); border: 2px solid #fff; color: #fff; font-weight: 700; font-size: 13px; display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 4px rgba(0,0,0,0.6); }
+</style>
+</head>
+<body>
+  <div id="verBadge" style="position:fixed;top:6px;right:8px;z-index:9999;
+    font-size:10px;font-weight:400;color:#3a4048;background:transparent;
+    border:none;padding:2px 4px;
+    pointer-events:none;font-family:system-ui,sans-serif;">v15</div>
+  <div class="controls">
+    <div class="toggle active" id="danasToggle">Today</div>
+    <div class="toggle" id="mapsToggle" title="Map source">OSM · free</div>
+    <label class="radius-field"><span class="rho">ρ</span>
+      <input type="number" id="radiusKm" min="0.1" max="50" step="0.5" value="3" inputmode="decimal"> km
+    </label>
+    <button id="radiusOk" class="okpill">OK</button>
+    <button id="mapBtn" class="ghost" style="display:none;">Karta</button>
+  </div>
+
+  <div class="pills" id="brandPills">
+    <span style="display:inline-flex;gap:8px;white-space:nowrap;">
+      <div class="pill" data-brand="pool">Pools</div>
+      <button id="updateBtn" class="ghost" title="Refresh pool hours">↻</button>
+    </span>
+    <div class="pill" data-brand="spar">Spar</div>
+    <div class="pill" data-brand="dm">Dm</div>
+    <div class="pill" data-brand="bio">Bio&amp;Bio</div>
+    <div class="pill" data-brand="mlinar">Mlinar</div>
+    <div class="pill" data-brand="mall">Mall</div>
+  </div>
+
+  <div id="mapWrap">
+    <div id="routeInfo"></div>
+    <div id="map" class="no-route"></div>
+  </div>
+
+  <div id="status"></div>
+  <div id="results"></div>
+
+<script src="config.js"></script>
+<script>
+/* =====================================================================================
+   Store & Pool Finder, v15 (12.9.2026)
+
+   TWO MAP OPTIONS, Marko's rule: "always a free option and a paid option".
+     free  = OpenStreetMap: OSM tiles (Leaflet), Overpass for the shops and their opening_hours,
+             OSRM (routing.openstreetmap.de) for the walking route. No key, no bill.
+     paid  = Google Maps Platform: Places API (text search) for the shops and the pools' Google
+             hours, Maps JavaScript API for the map. Every call is billed to API_KEY.
+   The choice is the toggle next to "Today"; it is remembered; free is the default.
+
+   POOLS: the eight Zagreb city pools. Their hours come from pools.json on the same origin
+   (update_pools.py on the Oracle machine reads the official pages; the pages.dev door relays it).
+   Without pools.json: Google hours in paid mode, "hours unknown" plus the official link in free mode.
+   ===================================================================================== */
+
+/* the PAID key: a Google Maps Platform browser key, served as config.js by the pages.dev
+   function (the Pages secret GOOGLE_MAPS_KEY) or by serve.py (env GOOGLE_MAPS_KEY, or the file
+   google_maps_key in the data folder). Never in the repo. A browser sees it, so restrict it to
+   this app's domains (HTTP referrers) in the Google Cloud console. Without it: free mode only. */
+const API_KEY = (window.SF_CONFIG && window.SF_CONFIG.googleMapsKey) || "";
+
+const OSM_TILES = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+const OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter"];
+const LEAFLET = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet";
+const OSRM_FOOT = "https://routing.openstreetmap.de/routed-foot/route/v1/foot/";
+const ZAGREB = { lat: 45.8131, lng: 15.9775 };
+
+let provider = "osm";        // "osm" (free) | "google" (paid)
+let mapAuthError = null;
+window.gm_authFailure = function () {
+  mapAuthError = "Google Maps rejected this key/page (gm_authFailure).";
+  setStatus("Map error: " + mapAuthError + " Switch to OSM (free).");
+};
+
+let userPos = null;
+let lastShown = [];
+let mapVisible = false;
+let activeBrands = new Set();
+let openFilter = "open";
+
+/* ---------- persistence ---------- */
+function loadPrefs() {
+  try {
+    const pills = JSON.parse(localStorage.getItem("sf_pills") || "[]");
+    activeBrands = new Set(Array.isArray(pills) ? pills : []);
+  } catch (e) { activeBrands = new Set(); }
+  const r = localStorage.getItem("sf_radius");
+  if (r) document.getElementById("radiusKm").value = r;
+  const o = localStorage.getItem("sf_open");
+  if (o === "open" || o === "all") openFilter = o;
+  const m = localStorage.getItem("sf_maps");
+  if (m === "google" || m === "osm") provider = m;
+  if (provider === "google" && !API_KEY) provider = "osm";
+}
+function savePills() { localStorage.setItem("sf_pills", JSON.stringify([...activeBrands])); }
+function saveRadius() { localStorage.setItem("sf_radius", document.getElementById("radiusKm").value); }
+function saveOpen() { localStorage.setItem("sf_open", openFilter); }
+
+/* ---------- store brands ----------
+   queries: Google Places text searches (paid). osm: Overpass selectors (free).
+   match: the name filter for Google's fuzzy results; matchOsm when the selector is exact enough. */
+const BRANDS = {
+  spar:   { label: "Spar", cls: "brand-spar", pin: "S", queries: ["Spar supermarket", "Interspar"],
+            match: n => /\b(inter)?spar\b/.test(n),
+            osm: ['["shop"]["name"~"spar",i]', '["shop"]["brand"~"spar",i]'] },
+  dm:     { label: "dm", cls: "brand-dm", pin: "d", queries: ["dm drogerie markt"],
+            match: n => n.includes("dm"),
+            osm: ['["shop"]["name"~"^dm( |-|$)",i]', '["shop"]["brand"~"^dm( |-|$)",i]'] },
+  bio:    { label: "bio&bio", cls: "brand-bio", pin: "b", queries: ["bio&bio", "bio bio prodavaonica"],
+            match: n => n.includes("bio"),
+            osm: ['["shop"]["name"~"bio ?& ?bio",i]'] },
+  mlinar: { label: "Mlinar", cls: "brand-mlinar", pin: "M", queries: ["Mlinar bakery", "Mlinar pekarnica"],
+            match: n => n.includes("mlinar"),
+            osm: ['["shop"]["name"~"mlinar",i]', '["amenity"]["name"~"mlinar",i]'] },
+  mall:   { label: "Mall", cls: "brand-mall", pin: "C", queries: ["Supernova Buzin Zagreb", "Avenue Mall Zagreb", "Arena Centar Zagreb"],
+            match: n => n.includes("supernova") || n.includes("avenue") || n.includes("arena"),
+            matchOsm: () => true,
+            osm: ['["shop"="mall"]'] }
+};
+const STORE_KEYS = ["spar", "dm", "bio", "mlinar", "mall"];
+
+/* ---------- Zagreb city pools (Upravljanje sportskim objektima) ----------
+   Only the name and the position are fixed here; the hours come from pools.json or Google.
+   Links and addresses from the official pages, positions from OpenStreetMap, 12.9.2026
+   (the old Utrina, Šalata and Mladost positions were up to 1.5 km off). Bazen Špansko opened 9.9.2026.
+   The same list lives in update_pools.py. */
+const OFFICIAL = "https://www.sportskiobjekti.hr/";
+const POOLS = [
+  { id: "pool-spansko",     name: "Bazen Špansko",                        query: "Bazen Špansko Zagreb",             addr: "Ul. Drage Stipca 4, Zagreb",          lat: 45.79740, lng: 15.90475, url: OFFICIAL + "bazen-spansko/2311" },
+  { id: "pool-mladost-out", name: "Bazeni Mladost – outdoor (SP Mladost)", query: "Bazeni Mladost Zagreb",            addr: "Jarunska 5, Zagreb",                  lat: 45.78243, lng: 15.94467, url: OFFICIAL + "sportski-park-mladost/1345" },
+  { id: "pool-mladost-in",  name: "Zimsko plivalište Mladost – indoor",   query: "Zimsko plivalište Mladost Zagreb", addr: "Trg Krešimira Ćosića 10, Zagreb",     lat: 45.80632, lng: 15.95132, url: OFFICIAL + "zimsko-plivaliste-mladost/1369" },
+  { id: "pool-utrine",      name: "Bazenski kompleks Utrina",             query: "Bazen Utrina Zagreb",              addr: "Kombolova ul. 4A, Zagreb",            lat: 45.77376, lng: 15.99168, url: OFFICIAL + "bazenski-kompleks-utrina/1368" },
+  { id: "pool-salata",      name: "ŠRC Šalata – outdoor pool",            query: "Bazeni Šalata Zagreb",             addr: "Stube Josipa Schlossera 2, Zagreb",   lat: 45.81658, lng: 15.98510, url: OFFICIAL + "sportsko-rekreacijski-centar-salata/1346" },
+  { id: "pool-svetice",     name: "Bazenski kompleks Svetice",            query: "Bazenski kompleks Svetice Zagreb", addr: "Ul. Divka Budaka 21, Zagreb",         lat: 45.81714, lng: 16.01589, url: OFFICIAL + "sportsko-rekreacijski-centar-svetice-i-bazenski-kompleks-svetice/1358" },
+  { id: "pool-jelkovec",    name: "Bazen Jelkovec (Sesvete)",             query: "Bazen Jelkovec Sesvete",           addr: "Ul. Vladimira Stahuljaka 5, Sesvete", lat: 45.81022, lng: 16.10691, url: OFFICIAL + "bazen-jelkovec/1370" },
+  { id: "pool-iver",        name: "Bazen Iver (Sesvetski Kraljevec)",     query: "Bazen Iver Sesvete",               addr: "Ul. Mladena Halape 6, Sesvete",       lat: 45.81181, lng: 16.18354, url: OFFICIAL + "bazen-iver-1388/1388" }
+];
+const POOL_BRAND = { label: "pool", cls: "brand-pool", pin: "P" };
+const POOL_NOTE = "Public-swim windows and holiday hours can differ — check the official schedule.";
+const EN_DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+/* Croatian public holidays: OSM "PH" rules and the pools' holiday schedule */
+const HOLIDAYS = new Set([
+  "2026-01-01", "2026-01-06", "2026-04-05", "2026-04-06", "2026-05-01", "2026-05-30", "2026-06-04",
+  "2026-06-22", "2026-08-05", "2026-08-15", "2026-11-01", "2026-11-18", "2026-12-25", "2026-12-26",
+  "2027-01-01", "2027-01-06", "2027-03-28", "2027-03-29", "2027-05-01", "2027-05-27", "2027-05-30",
+  "2027-06-22", "2027-08-05", "2027-08-15", "2027-11-01", "2027-11-18", "2027-12-25", "2027-12-26"
+]);
+
+/* ---------- helpers ---------- */
+function setStatus(msg) { document.getElementById("status").textContent = msg; }
+function distMeters(a, b) {
+  const R = 6371000, toRad = d => d * Math.PI / 180;
+  const dLat = toRad(b.lat - a.lat), dLng = toRad(b.lng - a.lng);
+  const la1 = toRad(a.lat), la2 = toRad(b.lat);
+  const x = Math.sin(dLat / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(x));
+}
+function fmtDist(m) { return m == null ? "" : (m < 1000 ? Math.round(m) + " m" : (m / 1000).toFixed(1) + " km"); }
+function fmtUpdated(d) { if (!(d instanceof Date) || isNaN(d)) return ""; const z = n => String(n).padStart(2, "0"); return z(d.getDate()) + "." + z(d.getMonth() + 1) + ". " + z(d.getHours()) + ":" + z(d.getMinutes()); }
+function ymd(d) { const z = n => String(n).padStart(2, "0"); return d.getFullYear() + "-" + z(d.getMonth() + 1) + "-" + z(d.getDate()); }
+function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+function gmapsDir(lat, lng) { return "https://www.google.com/maps/dir/?api=1&destination=" + lat + "," + lng + "&travelmode=walking"; }
+function osmDir(lat, lng) {
+  return userPos
+    ? "https://www.openstreetmap.org/directions?engine=fossgis_osrm_foot&route=" + userPos.lat + "%2C" + userPos.lng + "%3B" + lat + "%2C" + lng
+    : "https://www.openstreetmap.org/?mlat=" + lat + "&mlon=" + lng + "#map=17/" + lat + "/" + lng;
+}
+
+/* ---------- OSM opening_hours (free mode) ----------
+   Reads the common shapes: "Mo-Fr 07:00-21:00; Sa 07:00-20:00; Su,PH off", "Mo-Su 06:00-22:00",
+   "24/7", two ranges a day, a range over midnight. A later rule overrides an earlier one for the
+   days it names (OSM's meaning). Returns today's ranges in minutes, [] when closed, null when the
+   value cannot be read (the raw text is then shown as it is). */
+const DAY_KEYS = { su: 0, mo: 1, tu: 2, we: 3, th: 4, fr: 5, sa: 6 };
+function ohRanges(oh, date) {
+  if (!oh) return null;
+  const s = String(oh).trim();
+  if (/^24\s*\/\s*7$/.test(s)) return [[0, 1440]];
+  const dow = date.getDay(), ph = HOLIDAYS.has(ymd(date));
+  let result = null, found = false;
+  for (let rule of s.split(";")) {
+    rule = rule.split("||")[0].trim();
+    if (!rule) continue;
+    const times = []; let m;
+    const timeRe = /(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})/g;
+    while ((m = timeRe.exec(rule))) times.push([+m[1] * 60 + +m[2], +m[3] * 60 + +m[4]]);
+    const closed = /\b(off|closed)\b/i.test(rule);
+    if (!times.length && !closed) continue;
+    const cut = rule.search(/\d{1,2}:\d{2}|\boff\b|\bclosed\b/i);
+    const dayPart = cut > 0 ? rule.slice(0, cut) : "";
+    const tokens = dayPart.match(/\b(Mo|Tu|We|Th|Fr|Sa|Su|PH)(\s*-\s*(Mo|Tu|We|Th|Fr|Sa|Su))?\b/gi) || [];
+    let applies = tokens.length === 0;              // no weekday named: every day
+    for (const tok of tokens) {
+      const mm = tok.match(/^(\w{2})(?:\s*-\s*(\w{2}))?$/i);
+      if (!mm) continue;
+      const a = mm[1].toLowerCase(), z = (mm[2] || mm[1]).toLowerCase();
+      if (a === "ph") { if (ph) applies = true; continue; }
+      if (!(a in DAY_KEYS) || !(z in DAY_KEYS)) continue;
+      let d = DAY_KEYS[a];
+      for (let i = 0; i < 7; i++) { if (d === dow) applies = true; if (d === DAY_KEYS[z]) break; d = (d + 1) % 7; }
+    }
+    if (!applies) continue;
+    found = true;
+    result = closed ? [] : times.map(([a, b]) => (b <= a ? [a, b + 1440] : [a, b]));
+  }
+  return found ? result : null;
+}
+function ohInfo(oh) {
+  const now = new Date();
+  const r = ohRanges(oh, now);
+  if (r === null) return { openNow: undefined, today: oh ? String(oh) : null, next: null };
+  const mins = now.getHours() * 60 + now.getMinutes();
+  const fmt = m => String(Math.floor((m % 1440) / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0");
+  const today = r.length ? r.map(([a, b]) => fmt(a) + "–" + fmt(b)).join(", ") : "Closed today";
+  const openNow = r.some(([a, b]) => a <= mins && mins < b);
+  let next = null;
+  if (!openNow) {
+    const later = r.filter(([a]) => a > mins).sort((x, y) => x[0] - y[0]);
+    if (later.length) next = "Opens " + fmt(later[0][0]) + " today";
+    for (let step = 1; step <= 7 && !next; step++) {
+      const d = new Date(now); d.setDate(d.getDate() + step);
+      const rr = ohRanges(oh, d);
+      if (rr && rr.length) next = "Opens " + fmt(Math.min(...rr.map(x => x[0]))) + " " + (step === 1 ? "tomorrow" : EN_DAYS[d.getDay()].slice(0, 3));
+    }
+  }
+  return { openNow, today, next };
+}
+function osmAddr(t) {
+  const street = [t["addr:street"], t["addr:housenumber"]].filter(Boolean).join(" ");
+  const city = t["addr:city"] || t["addr:suburb"] || "";
+  return [street, city].filter(Boolean).join(", ");
+}
+
+/* ---------- the shops, free: Overpass ---------- */
+async function overpassSearch(brandKey, center, radius) {
+  const b = BRANDS[brandKey];
+  const around = "(around:" + Math.round(radius) + "," + center.lat + "," + center.lng + ")";
+  const q = "[out:json][timeout:25];(\n" + b.osm.map(sel => "nwr" + around + sel + ";").join("\n") + "\n);out center tags;";
+  let lastErr = null;
+  for (const ep of OVERPASS) {
+    try {
+      const res = await fetch(ep, { method: "POST", body: "data=" + encodeURIComponent(q),
+        headers: { "Content-Type": "application/x-www-form-urlencoded" } });
+      if (!res.ok) throw new Error("Overpass " + res.status);
+      const data = await res.json();
+      return (data.elements || []).map(el => {
+        const t = el.tags || {};
+        const lat = el.lat != null ? el.lat : (el.center && el.center.lat);
+        const lng = el.lon != null ? el.lon : (el.center && el.center.lon);
+        if (lat == null || lng == null) return null;
+        const oh = ohInfo(t.opening_hours);
+        return { id: el.type + "/" + el.id, name: t.name || t.brand || b.label, addr: osmAddr(t), lat, lng,
+                 openNow: oh.openNow, todayHours: oh.today, nextOpen: oh.next,
+                 mapsUri: gmapsDir(lat, lng), brand: brandKey, isPool: false };
+      }).filter(Boolean);
+    } catch (e) { lastErr = e; }
+  }
+  throw lastErr || new Error("Overpass unavailable");
+}
+
+/* ---------- the shops, paid: Google Places ---------- */
+function hoursToday(descs) {
+  if (!descs || !descs.length) return null;
+  const name = EN_DAYS[new Date().getDay()].toLowerCase();
+  const line = descs.find(d => d.toLowerCase().indexOf(name) === 0);
+  if (!line) return null;
+  const i = line.indexOf(":");
+  return (i >= 0 ? line.slice(i + 1) : line).trim();
+}
+function nextOpen(descs) {
+  if (!descs || !descs.length) return null;
+  const now = new Date(), today = now.getDay(), nowMins = now.getHours() * 60 + now.getMinutes();
+  function parseTime(t) {
+    const m = t.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+    if (!m) return null;
+    let h = parseInt(m[1], 10); const min = parseInt(m[2], 10); const ap = (m[3] || "").toUpperCase();
+    if (ap === "PM" && h < 12) h += 12;
+    if (ap === "AM" && h === 12) h = 0;
+    return h * 60 + min;
+  }
+  for (let step = 0; step <= 7; step++) {
+    const dayIdx = (today + step) % 7, dayName = EN_DAYS[dayIdx];
+    const line = descs.find(d => d.toLowerCase().indexOf(dayName.toLowerCase()) === 0);
+    if (!line) continue;
+    const i = line.indexOf(":");
+    const hrs = (i >= 0 ? line.slice(i + 1) : line).trim();
+    if (!hrs || /closed/i.test(hrs)) continue;
+    const openTime = hrs.split(/[–-]/)[0].trim();
+    if (step === 0) {
+      const openMins = parseTime(openTime);
+      if (openMins === null || openMins <= nowMins) continue;
+      return "Opens " + openTime + " today";
+    }
+    return "Opens " + openTime + " " + (step === 1 ? "tomorrow" : dayName.slice(0, 3));
+  }
+  return null;
+}
+async function placesSearch(q, brandKey, center, radius) {
+  const res = await fetch("https://places.googleapis.com/v1/places:searchText", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Goog-Api-Key": API_KEY,
+      "X-Goog-FieldMask": "places.displayName,places.formattedAddress,places.location,places.currentOpeningHours.openNow,places.currentOpeningHours.weekdayDescriptions,places.googleMapsUri,places.id"
+    },
+    body: JSON.stringify({
+      textQuery: q, languageCode: "en",
+      locationBias: { circle: { center: { latitude: center.lat, longitude: center.lng }, radius: radius } },
+      maxResultCount: 20, rankPreference: "DISTANCE"
+    })
+  });
+  if (!res.ok) throw new Error("Places API error " + res.status);
+  const data = await res.json();
+  return (data.places || []).map(p => ({
+    id: p.id,
+    name: p.displayName ? p.displayName.text : "Store",
+    addr: p.formattedAddress || "",
+    lat: p.location.latitude, lng: p.location.longitude,
+    openNow: p.currentOpeningHours ? p.currentOpeningHours.openNow : undefined,
+    todayHours: p.currentOpeningHours ? hoursToday(p.currentOpeningHours.weekdayDescriptions) : null,
+    nextOpen: p.currentOpeningHours ? nextOpen(p.currentOpeningHours.weekdayDescriptions) : null,
+    mapsUri: p.googleMapsUri || gmapsDir(p.location.latitude, p.location.longitude),
+    brand: brandKey, isPool: false
+  }));
+}
+
+/* ---------- the pools ---------- */
+async function poolLive(pool) {   // paid: one Places text search per pool
+  const fallback = { openNow: undefined, todayHours: null, mapsUri: null };
+  try {
+    const res = await fetch("https://places.googleapis.com/v1/places:searchText", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": API_KEY,
+        "X-Goog-FieldMask": "places.location,places.currentOpeningHours.openNow,places.currentOpeningHours.weekdayDescriptions,places.googleMapsUri"
+      },
+      body: JSON.stringify({
+        textQuery: pool.query, languageCode: "en",
+        locationBias: { circle: { center: { latitude: pool.lat, longitude: pool.lng }, radius: 700 } },
+        maxResultCount: 5, rankPreference: "DISTANCE"
+      })
+    });
+    if (!res.ok) return fallback;
+    const data = await res.json();
+    const cands = (data.places || [])
+      .map(p => ({ p, d: distMeters({ lat: pool.lat, lng: pool.lng }, { lat: p.location.latitude, lng: p.location.longitude }) }))
+      .filter(x => x.d <= 600).sort((a, b) => a.d - b.d);
+    if (!cands.length) return fallback;
+    const p = cands[0].p;
+    return {
+      openNow: p.currentOpeningHours ? p.currentOpeningHours.openNow : undefined,
+      todayHours: p.currentOpeningHours ? hoursToday(p.currentOpeningHours.weekdayDescriptions) : null,
+      mapsUri: p.googleMapsUri || null
+    };
+  } catch (e) { return fallback; }
+}
+function poolPlace(p, live, updated, notice) {
+  return {
+    id: p.id, name: p.name, addr: p.addr || "", lat: p.lat, lng: p.lng, brand: "pool", isPool: true,
+    openNow: live.openNow, todayHours: live.todayHours, alert: notice || POOL_NOTE, url: p.url || OFFICIAL,
+    updated: updated || null,
+    dist: userPos ? distMeters(userPos, { lat: p.lat, lng: p.lng }) : null,
+    mapsUri: live.mapsUri || gmapsDir(p.lat, p.lng)
+  };
+}
+/* pools.json first (free, the official hours from the machine); else Google (paid) or no hours (free) */
+async function fetchPools() {
+  try {
+    const r = await fetch("pools.json", { cache: "no-store" });
+    if (r.ok) {
+      const data = await r.json();
+      if (data && Array.isArray(data.pools) && data.pools.length) {
+        const upd = data.updated ? new Date(data.updated) : null;
+        return data.pools.map(p => poolPlace(p, {
+          openNow: p.open_now === true ? true : (p.open_now === false ? false : undefined),
+          todayHours: p.today_hours || null, mapsUri: null
+        }, upd, (p.notice || "").trim()));
+      }
+    }
+  } catch (e) { /* no pools.json here: the machine asleep, or a file:// page */ }
+  if (provider === "google") return Promise.all(POOLS.map(async p => poolPlace(p, await poolLive(p), null, "")));
+  return POOLS.map(p => poolPlace(p, { openNow: undefined, todayHours: null, mapsUri: null }, null,
+    "Hours not loaded (the machine is asleep or offline): see the official schedule, or switch to Google (paid)."));
+}
+
+/* ---------- the map: one small engine per provider ---------- */
+let gmap = null, lmap = null, userMarker = null, storeMarkers = [], routeLine = null, routeMarkers = [];
+let _gPromise = null, _lPromise = null;
+function loadGoogle() {
+  if (window.google && window.google.maps && window.google.maps.Map) return Promise.resolve();
+  if (_gPromise) return _gPromise;
+  _gPromise = new Promise((resolve, reject) => {
+    window.__mapsReady = function () { resolve(); };
+    const s = document.createElement("script");
+    s.src = "https://maps.googleapis.com/maps/api/js?key=" + API_KEY + "&v=weekly&callback=__mapsReady";
+    s.async = true;
+    s.onerror = () => reject(new Error("the Maps JavaScript API did not load"));
+    document.head.appendChild(s);
+  });
+  return _gPromise;
+}
+function loadLeaflet() {
+  if (window.L) return Promise.resolve();
+  if (_lPromise) return _lPromise;
+  _lPromise = new Promise((resolve, reject) => {
+    const css = document.createElement("link"); css.rel = "stylesheet"; css.href = LEAFLET + ".css"; document.head.appendChild(css);
+    const s = document.createElement("script"); s.src = LEAFLET + ".js"; s.async = true;
+    s.onload = () => resolve(); s.onerror = () => reject(new Error("Leaflet did not load"));
+    document.head.appendChild(s);
+  });
+  return _lPromise;
+}
+const ENGINE = {
+  osm: {
+    async ensure() {
+      await loadLeaflet();
+      if (!lmap) {
+        const c = userPos || ZAGREB;
+        lmap = L.map("map", { zoomControl: true }).setView([c.lat, c.lng], 13);
+        L.tileLayer(OSM_TILES, { maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' }).addTo(lmap);
+      }
+    },
+    shown() { if (lmap) setTimeout(() => lmap.invalidateSize(), 60); },
+    marker(p, label, title, onClick) {
+      const mk = L.marker([p.lat, p.lng], { title, icon: L.divIcon({ className: "", html: '<div class="lpin"><span>' + label + '</span></div>', iconSize: [26, 26], iconAnchor: [13, 13] }) }).addTo(lmap);
+      if (onClick) mk.on("click", onClick);
+      return mk;
+    },
+    you(p, r) { return L.circleMarker([p.lat, p.lng], { radius: r, color: "#fff", weight: 2, fillColor: "#39d0d8", fillOpacity: 1 }).addTo(lmap); },
+    line(path) { return L.polyline(path.map(q => [q.lat, q.lng]), { color: "#39d0d8", weight: 5, opacity: 0.9 }).addTo(lmap); },
+    remove(o) { if (o && lmap) lmap.removeLayer(o); },
+    fit(pts, pad) { if (pts.length) lmap.fitBounds(L.latLngBounds(pts.map(q => [q.lat, q.lng])), { padding: [pad, pad] }); },
+    view(p, z) { lmap.setView([p.lat, p.lng], z); },
+    destroy() { if (lmap) { lmap.remove(); lmap = null; } }
+  },
+  google: {
+    async ensure() {
+      await loadGoogle();
+      if (!gmap) {
+        gmap = new google.maps.Map(document.getElementById("map"), {
+          center: userPos || ZAGREB, zoom: 13,
+          styles: [
+            { elementType: "geometry", stylers: [{ color: "#1b1f27" }] },
+            { elementType: "labels.text.fill", stylers: [{ color: "#8b949e" }] },
+            { elementType: "labels.text.stroke", stylers: [{ color: "#0d1117" }] },
+            { featureType: "road", elementType: "geometry", stylers: [{ color: "#2a2f3a" }] },
+            { featureType: "water", elementType: "geometry", stylers: [{ color: "#0d1117" }] },
+            { featureType: "poi", stylers: [{ visibility: "off" }] }
+          ],
+          disableDefaultUI: true, zoomControl: true
+        });
+      }
+    },
+    shown() {},
+    marker(p, label, title, onClick) {
+      const mk = new google.maps.Marker({ position: p, map: gmap, title, label: { text: label, color: "#fff", fontWeight: "bold" } });
+      if (onClick) mk.addListener("click", onClick);
+      return mk;
+    },
+    you(p, r) { return new google.maps.Marker({ position: p, map: gmap, title: "You", icon: { path: google.maps.SymbolPath.CIRCLE, scale: r, fillColor: "#39d0d8", fillOpacity: 1, strokeColor: "#fff", strokeWeight: 2 } }); },
+    line(path) { return new google.maps.Polyline({ path, map: gmap, strokeColor: "#39d0d8", strokeWeight: 5, strokeOpacity: 0.9 }); },
+    remove(o) { if (o) o.setMap(null); },
+    fit(pts, pad) { if (!pts.length) return; const b = new google.maps.LatLngBounds(); pts.forEach(q => b.extend(q)); gmap.fitBounds(b, pad); },
+    view(p, z) { gmap.setCenter(p); gmap.setZoom(z); },
+    destroy() { gmap = null; document.getElementById("map").innerHTML = ""; }
+  }
+};
+const eng = () => ENGINE[provider];
+
+function clearMarkers() { storeMarkers.forEach(m => eng().remove(m)); storeMarkers = []; }
+function clearRoute() {
+  if (routeLine) { eng().remove(routeLine); routeLine = null; }
+  routeMarkers.forEach(m => eng().remove(m)); routeMarkers = [];
+}
+function showMapWrap(show) {
+  mapVisible = show;
+  document.getElementById("mapWrap").style.display = show ? "block" : "none";
+  document.getElementById("mapBtn").textContent = show ? "Hide" : "Map";
+  if (show) eng().shown();
+}
+function scrollToMap() { document.getElementById("mapWrap").scrollIntoView({ behavior: "smooth", block: "start" }); }
+
+/* the overview: every shown place and you, no route */
+async function showOverview() {
+  if (!lastShown.length && !userPos) { setStatus("Nothing to show on the map."); return; }
+  try { await eng().ensure(); } catch (e) { setStatus("Map unavailable: " + e.message); return; }
+  clearRoute();
+  document.getElementById("routeInfo").style.display = "none";
+  document.getElementById("map").className = "no-route";
+  showMapWrap(true);
+  clearMarkers();
+  eng().remove(userMarker); userMarker = null;
+  if (userPos) userMarker = eng().you(userPos, 8);
+  const pts = [];
+  if (userPos) pts.push(userPos);
+  lastShown.forEach(s => {
+    const pin = s.isPool ? POOL_BRAND.pin : BRANDS[s.brand].pin;
+    storeMarkers.push(eng().marker({ lat: s.lat, lng: s.lng }, pin, s.name, () => showRouteTo(s)));
+    pts.push({ lat: s.lat, lng: s.lng });
+  });
+  eng().fit(pts, 60);
+}
+
+/* the walking route: OSRM on OpenStreetMap, free in both modes */
+async function osrmRoute(origin, dest) {
+  const url = OSRM_FOOT + origin.lng + "," + origin.lat + ";" + dest.lng + "," + dest.lat + "?overview=full&geometries=geojson";
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("OSRM " + res.status);
+  const data = await res.json();
+  if (data.code !== "Ok" || !data.routes || !data.routes.length) throw new Error("no route");
+  const r = data.routes[0];
+  return { path: r.geometry.coordinates.map(c => ({ lat: c[1], lng: c[0] })), distance: r.distance, duration: r.duration };
+}
+async function showRouteTo(place) {
+  try { await eng().ensure(); } catch (e) { setStatus("Map unavailable: " + e.message); return; }
+  showMapWrap(true);
+  scrollToMap();
+  clearMarkers();
+  clearRoute();
+  eng().remove(userMarker); userMarker = null;
+  const info = document.getElementById("routeInfo");
+  const dest = { lat: place.lat, lng: place.lng };
+  routeMarkers.push(eng().marker(dest, place.isPool ? POOL_BRAND.pin : BRANDS[place.brand].pin, place.name, null));
+  const navLink = provider === "google" ? place.mapsUri : osmDir(place.lat, place.lng);
+  if (!userPos) {
+    info.style.display = "none";
+    document.getElementById("map").className = "no-route";
+    eng().view(dest, 15);
+    setStatus("Location unavailable, no route to draw. Use the open-in link on the card.");
+    return;
+  }
+  routeMarkers.push(eng().you(userPos, 7));
+  document.getElementById("map").className = "";
+  info.style.display = "block";
+  info.innerHTML = "Calculating walk to <b>" + esc(place.name) + "</b>…";
+  try {
+    const route = await osrmRoute(userPos, dest);
+    routeLine = eng().line(route.path);
+    eng().fit(route.path.concat([userPos, dest]), 50);
+    const km = (route.distance / 1000).toFixed(1);
+    const min = Math.max(1, Math.round(route.duration / 60));
+    info.innerHTML = "Walk to <b>" + esc(place.name) + "</b>: " + km + " km · ~" + min + " min" +
+      ' &nbsp;<a class="official" href="' + navLink + '" target="_blank" rel="noopener">open navigation ↗</a>';
+  } catch (e) {
+    if (routeLine) { eng().remove(routeLine); routeLine = null; }
+    document.getElementById("map").className = "no-route";
+    info.style.display = "none";
+    eng().fit([userPos, dest], 60);
+    setStatus("Couldn't fetch the route (" + e.message + "). Use the open-in link on the card.");
+  }
+}
+
+/* ---------- the provider switch ---------- */
+function paintProvider() {
+  const t = document.getElementById("mapsToggle");
+  const paid = provider === "google";
+  t.textContent = paid ? "Google · paid" : (API_KEY ? "OSM · free" : "OSM · free (no Google key)");
+  t.classList.toggle("paid", paid);
+  t.classList.toggle("free", !paid);
+  t.title = paid
+    ? "Google Maps Platform: every search and map load is billed to the key. Tap for OpenStreetMap, free."
+    : "OpenStreetMap, free: Overpass finds the shops, OSRM walks. Tap for Google Maps, paid.";
+}
+function setProvider(p) {
+  if (p === provider) return;
+  if (p === "google" && !API_KEY) { setStatus("No Google key on this server: the free OpenStreetMap option only."); return; }
+  clearMarkers(); clearRoute(); eng().remove(userMarker); userMarker = null;
+  eng().destroy();
+  provider = p;
+  localStorage.setItem("sf_maps", p);
+  paintProvider();
+  window._allPlaces = [];
+  if (activeBrands.size) run();
+  else if (mapVisible) showOverview();
+}
+
+/* ---------- render ---------- */
+function render() {
+  const wrap = document.getElementById("results");
+  wrap.innerHTML = "";
+  const list = window._allPlaces || [];
+  // "Today": Google knows the hours of nearly every shop, so only the open ones are shown; OSM shops
+  // without an opening_hours tag stay in the list as "hours unknown" instead of vanishing.
+  const show = openFilter === "open"
+    ? list.filter(s => provider === "google" || s.isPool ? s.openNow === true : s.openNow !== false)
+    : list;
+  lastShown = show;
+  if (mapVisible) showOverview();
+  if (!show.length) {
+    wrap.innerHTML = openFilter === "open"
+      ? '<div class="notice">Nothing selected is open now. Turn off “Today” or widen ρ.</div>'
+      : '<div class="store">No results in this radius.</div>';
+    return;
+  }
+  const dayLbl = EN_DAYS[new Date().getDay()];
+  show.forEach(s => {
+    let badge, cls;
+    if (s.openNow === true) { badge = "Open now"; cls = "open"; }
+    else if (s.openNow === false) { badge = "Closed"; cls = "closed"; }
+    else { badge = "Hours unknown"; cls = "unknown"; }
+    const b = s.isPool ? POOL_BRAND : BRANDS[s.brand];
+    const el = document.createElement("div");
+    el.className = "store" + (s.isPool ? " pool" : "");
+    let html =
+      '<div class="store-top">' +
+        '<div class="store-name">' + esc(s.name) + '<span class="brand-tag ' + b.cls + '">' + b.label + '</span></div>' +
+        (s.dist != null ? '<div class="dist">' + fmtDist(s.dist) + '</div>' : '') +
+      '</div>' +
+      '<div class="badge ' + cls + '">' + badge + '</div>' +
+      (s.openNow === false && s.nextOpen ? ' <span class="nextopen">' + esc(s.nextOpen) + '</span>' : '');
+    if (s.todayHours) html += '<div class="hours"><span class="lbl">Today (' + dayLbl + '): </span>' + esc(s.todayHours) + '</div>';
+    if (s.isPool && s.alert) html += '<div class="alert">' + esc(s.alert) + '</div>';
+    if (s.isPool && s.updated) html += '<div class="navhint">official source · updated ' + fmtUpdated(s.updated) + '</div>';
+    const links = provider === "google"
+      ? '<a class="maplink" href="' + s.mapsUri + '" target="_blank" rel="noopener">Open in Google Maps</a>'
+      : '<a class="maplink" href="' + osmDir(s.lat, s.lng) + '" target="_blank" rel="noopener">Open in OSM ↗</a>' +
+        '<a class="maplink" href="' + gmapsDir(s.lat, s.lng) + '" target="_blank" rel="noopener">Google Maps ↗</a>';
+    html += '<div class="store-addr">' + esc(s.addr) + '</div>' +
+      '<div class="actions">' + links +
+        '<a class="maplink transit" href="https://www.google.com/maps/dir/?api=1&destination=' + s.lat + ',' + s.lng + '&travelmode=transit" target="_blank" rel="noopener">Tram/Bus ↗</a>' +
+        (s.isPool ? '<a class="official" href="' + s.url + '" target="_blank" rel="noopener">official schedule ↗</a>' : '') +
+        '<span class="navhint">tap card for walk route</span>' +
+      '</div>';
+    el.innerHTML = html;
+    el.addEventListener("click", ev => { if (ev.target.closest("a")) return; showRouteTo(s); });
+    wrap.appendChild(el);
+  });
+}
+
+/* ---------- main run ---------- */
+let isRunning = false;
+async function run() {
+  if (activeBrands.size === 0) { setStatus("Pick a category to search."); return; }
+  if (isRunning) return;
+  isRunning = true;
+  document.getElementById("radiusOk").disabled = true;
+  const wantStores = STORE_KEYS.some(k => activeBrands.has(k));
+  const wantPools = activeBrands.has("pool");
+  try {
+    setStatus("Getting your location…");
+    userPos = await new Promise(resolve => {
+      if (!navigator.geolocation) return resolve(null);
+      navigator.geolocation.getCurrentPosition(
+        p => resolve({ lat: p.coords.latitude, lng: p.coords.longitude }),
+        () => resolve(null),
+        { enableHighAccuracy: true, timeout: 15000 });
+    });
+    let places = [];
+    let note = "";
+    if (wantStores) {
+      if (!userPos) {
+        note = "Location unavailable, couldn't search stores.";
+      } else {
+        const km = parseFloat(document.getElementById("radiusKm").value);
+        const radius = (km > 0 ? km : 3) * 1000;
+        setStatus(provider === "google" ? "Searching Google Places (paid)…" : "Searching OpenStreetMap (free)…");
+        const tasks = [];
+        for (const key of STORE_KEYS) {
+          if (!activeBrands.has(key)) continue;
+          if (provider === "google") {
+            for (const q of BRANDS[key].queries) tasks.push(placesSearch(q, key, userPos, radius).catch(() => []));
+          } else {
+            tasks.push(overpassSearch(key, userPos, radius).catch(e => { note = "OpenStreetMap search failed (" + e.message + "), try again in a moment."; return []; }));
+          }
+        }
+        const results = (await Promise.all(tasks)).flat();
+        const seen = new Set();
+        places = results
+          .filter(s => { const b = BRANDS[s.brand]; return (provider === "osm" && b.matchOsm) ? b.matchOsm(s.name) : b.match(s.name.toLowerCase()); })
+          .filter(s => { if (seen.has(s.id)) return false; seen.add(s.id); return true; })
+          .map(s => ({ ...s, dist: distMeters(userPos, { lat: s.lat, lng: s.lng }) }))
+          .filter(s => s.dist <= radius);
+      }
+    }
+    if (wantPools) {
+      setStatus("Loading pool hours…");
+      places = places.concat(await fetchPools());
+    }
+    places.sort((a, b) => (a.dist == null ? Infinity : a.dist) - (b.dist == null ? Infinity : b.dist));
+    window._allPlaces = places;
+    if (!userPos && wantPools) note += (note ? " " : "") + "No location: pools shown without distance or route.";
+    setStatus(note);
+    render();
+  } catch (err) {
+    setStatus("Error: " + err.message);
+  } finally {
+    isRunning = false;
+    document.getElementById("radiusOk").disabled = false;
+  }
+}
+
+/* ---------- events ---------- */
+document.getElementById("mapBtn").addEventListener("click", () => { if (mapVisible) showMapWrap(false); else showOverview(); });
+document.getElementById("radiusKm").addEventListener("change", saveRadius);
+document.getElementById("radiusOk").addEventListener("click", () => {
+  saveRadius();
+  if (activeBrands.size) run(); else setStatus("Pick a category first.");
+});
+document.getElementById("mapsToggle").addEventListener("click", () => setProvider(provider === "google" ? "osm" : "google"));
+
+/* the pool refresh: /update on the same origin. On pages.dev the door relays it to the machine, where
+   serve.py runs update_pools.py and rewrites pools.json (a run younger than ten minutes is not
+   repeated; a timer refreshes every morning too). Then the pools are reloaded if shown. */
+document.getElementById("updateBtn").addEventListener("click", async () => {
+  const btn = document.getElementById("updateBtn");
+  btn.disabled = true;
+  const original = btn.textContent;
+  btn.textContent = "⏳";
+  setStatus("Refreshing pool hours from the official site…");
+  try {
+    const r = await fetch("update", { cache: "no-store" });
+    const data = await r.json().catch(() => ({ ok: r.ok, log: "" }));
+    if (data.ok) {
+      setStatus(data.skipped ? "Pool hours are fresh (updated " + (data.age_min == null ? "a moment" : data.age_min + " min") + " ago)." : "Pool hours updated.");
+      if (activeBrands.has("pool")) run();
+    } else if (data.asleep) {
+      setStatus("The machine is asleep: wake it at ttt-lll.pages.dev/machine, then tap ↻ again.");
+    } else {
+      setStatus("Update failed: " + (data.error || "see the console log."));
+      console.log(data.log || "");
+    }
+  } catch (e) {
+    setStatus("Update unavailable here (a file:// page has no server).");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+});
+
+document.querySelectorAll("#brandPills .pill").forEach(p => {
+  p.addEventListener("click", () => {
+    const b = p.dataset.brand;
+    activeBrands = new Set([b]);
+    document.querySelectorAll("#brandPills .pill").forEach(x => x.classList.toggle("active", x.dataset.brand === b));
+    savePills();
+    run();
+  });
+});
+document.getElementById("danasToggle").addEventListener("click", () => {
+  const active = document.getElementById("danasToggle").classList.toggle("active");
+  openFilter = active ? "open" : "all";
+  saveOpen();
+  if (window._allPlaces) render();
+});
+
+/* ---------- init ---------- */
+loadPrefs();
+if (activeBrands.size > 1) activeBrands = new Set([[...activeBrands][0]]);   // one pill at a time
+const activePill = [...activeBrands][0] || null;
+document.querySelectorAll("#brandPills .pill").forEach(p => p.classList.toggle("active", p.dataset.brand === activePill));
+document.getElementById("danasToggle").classList.toggle("active", openFilter !== "all");
+paintProvider();
+document.getElementById("mapBtn").style.display = "inline-block";
+setStatus(activeBrands.size ? "Tap OK to search, or a category." : "Pick a category to search.");
+</script>
+</body>
+</html>

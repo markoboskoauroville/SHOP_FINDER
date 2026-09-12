@@ -1,0 +1,8 @@
+pools.json
+pools.json.tmp
+groq_key
+__pycache__/
+.wrangler/
+node_modules/
+.DS_Store
+google_maps_key
