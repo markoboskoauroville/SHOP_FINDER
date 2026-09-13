@@ -10,6 +10,7 @@ with the one installed, without importing serve.py.
 
 v1 is the first numbered version (13.9.2026): everything before it was the unnumbered 12.9.2026 app.
 v2 (13.9.2026): the settings gear, the keys tested with the keyring's probes, the port picked when taken.
+v3 (13.9.2026): the live port registry (portpick.announce, ports.md §3); the page opens in Chrome, bounded.
 """
 
-APP_VERSION = 2
+APP_VERSION = 3

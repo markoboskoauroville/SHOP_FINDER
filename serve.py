@@ -505,6 +505,7 @@ if __name__ == "__main__":
         # the ecosystem rule of 13.9.2026); on the machine (PREFIX set) Caddy routes to ONE port,
         # so a taken port there is an error systemd retries, not a move
         PORT, note = portpick.pick(HOST if HOST != "0.0.0.0" else "0.0.0.0", PORT)
+        portpick.announce("mapool", PORT)      # ~/.mantra/ports, for the launcher (ports.md §3)
     try:
         httpd = Server((HOST, PORT), Handler)
     except OSError as e:
