@@ -86,6 +86,24 @@
   .tablewrap { overflow-x: auto; }
   #report { display: none; margin-bottom: 12px; }
   #report .stats { cursor: default; }
+  .gear { margin-left: auto; padding: 8px 12px; font-size: 1.1rem; line-height: 1; }
+  .gear.active { color: var(--accent); border-color: var(--accent); }
+  .settings { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin-bottom: 12px; }
+  .set-head { font-weight: 700; margin-bottom: 8px; }
+  .set-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 8px 0; }
+  .set-lbl { color: var(--muted); font-size: 0.85rem; }
+  .keyrow { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; padding: 8px 0; border-top: 1px solid var(--border); }
+  .keyrow .kname { font-weight: 600; min-width: 120px; }
+  .keyrow .ksrc { color: var(--muted); font-size: 0.82rem; }
+  .keyrow .kstate { font-size: 0.78rem; font-weight: 700; padding: 2px 9px; border-radius: 12px; border: 1px solid var(--border); color: var(--muted); }
+  .keyrow .kstate.works { background: rgba(63,185,80,0.15); color: var(--open); border-color: transparent; }
+  .keyrow .kstate.valid { color: var(--text); border-color: var(--text); }
+  .keyrow .kstate.nocredit { background: rgba(240,136,62,0.15); color: #f0883e; border-color: transparent; }
+  .keyrow .kstate.rejected { background: rgba(248,81,73,0.15); color: var(--closed); border-color: transparent; }
+  .keyrow .kstate.throttled { color: var(--open); border-color: var(--open); }
+  .keyrow .kdet { color: var(--muted); font-size: 0.78rem; flex-basis: 100%; overflow-wrap: anywhere; }
+  .pick { display: inline-block; border: 1px solid var(--cyan); color: var(--cyan); border-radius: 8px; padding: 8px 12px; font-size: 0.88rem; font-weight: 600; cursor: pointer; }
+  #keyFile { display: none; }
   .brand-tag { font-size: 0.72rem; padding: 1px 7px; border-radius: 10px; margin-left: 8px; vertical-align: middle; font-weight: 600; }
   .brand-spar { background: rgba(227,30,36,0.15); color: #ff6b6b; }
   .brand-dm { background: rgba(0,144,209,0.15); color: #4cb8e8; }
@@ -109,7 +127,7 @@
   <div id="verBadge" style="position:fixed;top:6px;right:8px;z-index:9999;
     font-size:10px;font-weight:400;color:#3a4048;background:transparent;
     border:none;padding:2px 4px;
-    pointer-events:none;font-family:system-ui,sans-serif;">v16</div>
+    pointer-events:none;font-family:system-ui,sans-serif;">v17</div>
   <div class="controls">
     <div class="toggle active" id="danasToggle">Today</div>
     <div class="toggle" id="mapsToggle" title="Map source">OSM · free</div>
@@ -118,6 +136,18 @@
     </label>
     <button id="radiusOk" class="okpill">OK</button>
     <button id="mapBtn" class="ghost" style="display:none;">Karta</button>
+    <button id="gearBtn" class="ghost gear" title="Settings" aria-label="Settings">⚙</button>
+  </div>
+  <div id="settings" class="settings" hidden>
+    <div class="set-head">Settings <span class="navhint" id="setVersion"></span></div>
+    <div class="set-row"><span class="set-lbl">Keys on this machine</span><span class="navhint" id="setWhere"></span></div>
+    <div id="setKeys"></div>
+    <div class="set-row">
+      <label class="pick" for="keyFile">choose a key file …</label>
+      <input type="file" id="keyFile" accept=".txt,.md,.keys,text/plain">
+      <span class="navhint" id="keyFileName">a note or a keyring v1 file; the keys are found by shape and stored here, never shown</span>
+    </div>
+    <div class="navhint" id="setNote"></div>
   </div>
 
   <div class="pills" id="brandPills">
@@ -145,7 +175,13 @@
 <script src="config.js"></script>
 <script>
 /* =====================================================================================
-   Store & Pool Finder, v16 (13.9.2026)
+   Store & Pool Finder, v17 (13.9.2026)
+
+   v17: the settings gear (⚙, the far end of the controls row). On the machine the page runs on (a
+   phone, a Mac) it shows which keys the server holds (Google, Anthropic, Groq), takes a picked key
+   file and tests each key for real with the keyring's probes (KEYRING_TERMUX/probes.py, vendored
+   into serve.py's folder). Behind the pages.dev door the server answers 404 to the settings
+   addresses, and the panel says the keys live on the machine.
 
    v16, Marko's asks of 13.9.2026:
      - every shop's title carries its street and, in parentheses, the distance in km from British
@@ -914,6 +950,67 @@ async function run() {
     document.getElementById("radiusOk").disabled = false;
   }
 }
+
+/* ---------- the settings gear: the keys on the machine the page runs on ---------- */
+const KEY_NAMES = { google: "Google Maps key", anthropic: "Anthropic key (Haiku reads the pool pages)", groq: "Groq key (the fallback)" };
+let settingsOn = false, settingsAvailable = null;
+async function loadSettings() {
+  $("setVersion").textContent = "";
+  try {
+    const r = await fetch("settings/state", { cache: "no-store" });
+    if (r.status === 404) { settingsAvailable = false; paintSettingsUnavailable(); return; }
+    const j = await r.json();
+    settingsAvailable = true;
+    $("setVersion").textContent = "v" + j.version;
+    $("setWhere").textContent = j.data_dir;
+    $("setKeys").innerHTML = Object.keys(KEY_NAMES).map(p => {
+      const k = j.keys[p] || {};
+      const cls = (k.state || "untested").replace(" ", "");
+      return '<div class="keyrow" data-p="' + p + '"><span class="kname">' + esc(KEY_NAMES[p]) + '</span>' +
+        '<span class="ksrc">' + (k.present ? esc(k.source) : "not here") + '</span>' +
+        '<span class="kstate ' + cls + '">' + esc(k.state || "untested") + '</span>' +
+        '<button class="ghost small" data-act="keytest" data-p="' + p + '"' + (k.present ? "" : " disabled") + '>test</button>' +
+        (k.detail ? '<span class="kdet">' + esc(k.detail) + (k.at ? " · " + esc(k.at.replace("T", " ").slice(0, 16)) : "") + '</span>' : '') + '</div>';
+    }).join("");
+    $("setNote").textContent = "Test asks the provider for the smallest real thing it sells; a Google key restricted to the Places API works for Places and says so.";
+  } catch (e) { settingsAvailable = false; paintSettingsUnavailable(); }
+}
+function paintSettingsUnavailable() {
+  $("setWhere").textContent = "";
+  $("setKeys").innerHTML = '<div class="keyrow"><span class="ksrc">This copy of the page runs behind the pages.dev door: the keys live on the machine (~/.shopfinder) and are put there from the Mac with bash deploy.sh key. Run the app on a phone or a Mac (mapool) to manage keys here.</span></div>';
+  $("keyFile").disabled = true;
+  document.querySelector('label[for="keyFile"]').style.opacity = 0.45;
+  document.querySelector('label[for="keyFile"]').style.pointerEvents = "none";
+}
+const $ = id => document.getElementById(id);
+$("gearBtn").addEventListener("click", () => {
+  settingsOn = !settingsOn;
+  $("settings").hidden = !settingsOn;
+  $("gearBtn").classList.toggle("active", settingsOn);
+  if (settingsOn) loadSettings();
+});
+$("settings").addEventListener("click", async ev => {
+  const b = ev.target.closest('[data-act="keytest"]'); if (!b) return;
+  const p = b.dataset.p; b.disabled = true; b.textContent = "testing …";
+  try {
+    const r = await fetch("settings/test?provider=" + p, { cache: "no-store" });
+    const j = await r.json();
+    setStatus(KEY_NAMES[p] + ": " + j.state + (j.detail ? " · " + j.detail : ""));
+  } catch (e) { setStatus("The test did not answer: " + e.message); }
+  loadSettings();
+});
+$("keyFile").addEventListener("change", async () => {
+  const f = $("keyFile").files[0]; if (!f) return;
+  $("keyFileName").textContent = f.name + " (" + f.size + " B)";
+  try {
+    const r = await fetch("settings/import", { method: "POST", body: await f.text(), headers: { "Content-Type": "text/plain" } });
+    const j = await r.json();
+    if (!r.ok || !j.ok) throw new Error(j.error || ("HTTP " + r.status));
+    setStatus(j.written && j.written.length ? "Stored: " + j.written.map(p => KEY_NAMES[p]).join(", ") + ". Tap test to check each." : (j.note || "nothing stored"));
+  } catch (e) { setStatus("Import failed: " + e.message); }
+  $("keyFile").value = "";
+  loadSettings();
+});
 
 /* ---------- events ---------- */
 document.getElementById("mapBtn").addEventListener("click", () => { if (mapVisible) showMapWrap(false); else showOverview(); });

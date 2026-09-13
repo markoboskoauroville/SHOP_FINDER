@@ -29,8 +29,16 @@ shows the installed and the available version (version.py here and on origin/mai
 pulls with --ff-only and restarts itself on the same port (selfupdate.py). No terminal (systemd on
 the machine, nohup, a pipe): no keys, it serves; Ctrl-C stops it as before.
 
+The settings gear (Marko, 13.9.2026): on a phone or a Mac, the page's ⚙ shows which keys this
+folder holds, takes a picked key file (the keys found by shape: AIza… is the Google key, sk-ant-…
+the Anthropic key, gsk_… the Groq fallback) and tests each key for real with the probes of
+KEYRING_TERMUX (probes.py, vendored). The settings addresses answer only to the machine they run
+on: a request that came through Caddy or the pages.dev door (X-Forwarded-For, or PREFIX set) gets
+404, so the public app can neither read nor replace the keys. Keys in the data folder can also
+come from the keyring: `keyring get anthropic` is asked when no file and no environment hold one.
+
 Settings: HOST (default 0.0.0.0), PORT (8080), PREFIX (empty), SHOPFINDER_DATA (the folder of
-pools.json and groq_key; default: this folder), UPDATE_MIN_AGE (minutes, default 10).
+pools.json and the key files; default: this folder), UPDATE_MIN_AGE (minutes, default 10).
 """
 
 import os
@@ -48,6 +56,8 @@ import urllib.error
 import collections
 
 import console as term
+import portpick
+import probes
 import selfupdate
 import version
 
@@ -81,15 +91,75 @@ daily = {"day": "", "places": 0, "gtile": 0}
 tiles_session = {"session": None, "expiry": 0, "checked": 0, "ok": False}
 
 
-def google_key():
-    key = (os.environ.get("GOOGLE_MAPS_KEY") or "").strip()
+KEY_FILES = {"google": "google_maps_key", "anthropic": "anthropic_key", "groq": "groq_key"}
+KEY_ENV = {"google": "GOOGLE_MAPS_KEY", "anthropic": "ANTHROPIC_API_KEY", "groq": "GROQ_API_KEY"}
+KEY_SHAPES = {"google": re.compile(r"AIza[A-Za-z0-9_\-]{35}"), "anthropic": re.compile(r"sk-ant-[A-Za-z0-9_\-]{20,}"), "groq": re.compile(r"gsk_[A-Za-z0-9]{20,}")}
+_keyring_cache = {}
+
+
+def read_key(provider):
+    """The environment, then the file in the data folder, then the keyring on this machine."""
+    key = (os.environ.get(KEY_ENV[provider]) or "").strip()
     if key:
         return key
     try:
-        with open(os.path.join(DATA_DIR, "google_maps_key"), encoding="utf-8") as f:
-            return f.read().strip()
+        with open(os.path.join(DATA_DIR, KEY_FILES[provider]), encoding="utf-8") as f:
+            key = f.read().strip()
+        if key:
+            return key
     except OSError:
-        return ""
+        pass
+    if provider not in _keyring_cache:
+        _keyring_cache[provider] = ""
+        try:
+            p = subprocess.run(["keyring", "get", provider], capture_output=True, text=True, timeout=10)
+            _keyring_cache[provider] = p.stdout.strip() if p.returncode == 0 else ""
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    return _keyring_cache[provider]
+
+
+def google_key():
+    return read_key("google")
+
+
+def write_key(provider, value):
+    """0600, written beside its name and renamed over it."""
+    path = os.path.join(DATA_DIR, KEY_FILES[provider])
+    fd = os.open(path + ".new", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(value.strip() + "\n")
+    os.replace(path + ".new", path)
+    _keyring_cache.pop(provider, None)
+
+
+def key_state():
+    """What the gear shows: per provider, whether a key is here and where from, never the key."""
+    out = {}
+    for prov in KEY_FILES:
+        src = ""
+        if (os.environ.get(KEY_ENV[prov]) or "").strip():
+            src = "environment"
+        elif os.path.exists(os.path.join(DATA_DIR, KEY_FILES[prov])) and os.path.getsize(os.path.join(DATA_DIR, KEY_FILES[prov])) > 1:
+            src = "file " + KEY_FILES[prov]
+        elif read_key(prov):
+            src = "the keyring"
+        out[prov] = {"present": bool(src), "source": src, "state": settings_state.get(prov, {}).get("state", "untested"), "detail": settings_state.get(prov, {}).get("detail", ""), "at": settings_state.get(prov, {}).get("at", "")}
+    return out
+
+
+settings_state = {}
+
+
+def local_only(handler):
+    """True for a request made on this machine, straight to this server: not through Caddy (which
+    adds X-Forwarded-For), not through the pages.dev door, not with PREFIX (the machine's shape)."""
+    if PREFIX:
+        return False
+    h = handler.headers
+    if h.get("X-Forwarded-For") or h.get("X-Client-IP") or h.get("CF-Connecting-IP"):
+        return False
+    return handler.client_address[0] in ("127.0.0.1", "::1", "::ffff:127.0.0.1")
 
 
 def allowed(kind, ip):
@@ -258,9 +328,64 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self.serve_tile(path)
         if path == "/health":
             return send_json(self, 200, health())
+        if path == "/settings/state":
+            if not local_only(self):
+                return self.send_error(404, "not here")
+            return send_json(self, 200, {"ok": True, "version": version.APP_VERSION, "keys": key_state(), "data_dir": DATA_DIR})
+        if path.startswith("/settings/test"):
+            if not local_only(self):
+                return self.send_error(404, "not here")
+            return self.settings_test()
         # the static files: SimpleHTTPRequestHandler reads self.path
         self.path = path
         return super().do_GET()
+
+    def do_POST(self):
+        path = urllib.parse.unquote(self.path.split("?")[0])
+        if path == "/settings/import":
+            if not local_only(self):
+                return self.send_error(404, "not here")
+            return self.settings_import()
+        return self.send_error(404, "Not found")
+
+    def settings_import(self):
+        """The picked key file, as the request body (text): keys found by shape, written to the data
+        folder, the answer says what was found and never a value."""
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            n = 0
+        if n <= 0 or n > 4 * 1024 * 1024:
+            return send_json(self, 400, {"ok": False, "error": "no file, or a file larger than 4 MB, which is not a key file"})
+        raw = self.rfile.read(n)
+        if b"\x00" in raw[:4096]:
+            return send_json(self, 400, {"ok": False, "error": "not a text file"})
+        text = raw.decode("utf-8", "replace")
+        found = {}
+        for prov, rx in KEY_SHAPES.items():
+            m = rx.findall(text)
+            if m:
+                found[prov] = m[-1]
+        if not found:
+            return send_json(self, 200, {"ok": True, "written": [], "note": "no key of a shape this app uses (AIza…, sk-ant-…, gsk_…) in that file"})
+        written = []
+        for prov, val in found.items():
+            write_key(prov, val)
+            settings_state.pop(prov, None)
+            written.append(prov)
+        return send_json(self, 200, {"ok": True, "written": written, "keys": key_state()})
+
+    def settings_test(self):
+        qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        prov = (qs.get("provider") or [""])[0]
+        if prov not in KEY_FILES:
+            return send_json(self, 400, {"ok": False, "error": "provider?"})
+        key = read_key(prov)
+        if not key:
+            return send_json(self, 200, {"ok": True, "state": "absent", "detail": "no %s key here" % prov})
+        v = probes.test_key(prov, key)
+        settings_state[prov] = {"state": v["state"], "detail": v["detail"][:200], "at": time.strftime("%Y-%m-%dT%H:%M:%S")}
+        return send_json(self, 200, {"ok": True, "state": v["state"], "detail": v["detail"][:200], "status": v.get("status"), "apis": v.get("apis")})
 
     def client_ip(self):
         h = self.headers
@@ -374,14 +499,20 @@ if __name__ == "__main__":
     if not os.path.isdir(PUBLIC):
         print("no public/ folder beside serve.py: " + PUBLIC)
         sys.exit(1)
+    note = None
+    if not PREFIX:
+        # on a phone or a Mac: the app never fails to start because a port is taken (portpick.py,
+        # the ecosystem rule of 13.9.2026); on the machine (PREFIX set) Caddy routes to ONE port,
+        # so a taken port there is an error systemd retries, not a move
+        PORT, note = portpick.pick(HOST if HOST != "0.0.0.0" else "0.0.0.0", PORT)
     try:
         httpd = Server((HOST, PORT), Handler)
     except OSError as e:
-        print("port %d is taken (%s): another copy of this app? PORT=8081 python3 serve.py picks another" % (PORT, e.strerror))
+        print("port %d is taken (%s): another copy of this app?" % (PORT, e.strerror))
         sys.exit(1)
     url = "http://%s:%d%s/" % ("localhost" if HOST in ("0.0.0.0", "127.0.0.1") else HOST, PORT, PREFIX)
     with httpd:
-        action = term.run(httpd, url, snapshot=console_snapshot,
+        action = term.run(httpd, url, snapshot=console_snapshot, note=note,
                           on_check_update=selfupdate.check_remote, on_perform_update=selfupdate.perform_update,
                           busy=console_busy)
     if action == "restart":

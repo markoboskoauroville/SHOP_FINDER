@@ -27,14 +27,63 @@ check("no tty: it said there are no keys", "no terminal: no keys" in out, out[-3
 check("no tty: no key row was drawn", "q quit   o open page" not in out)
 check("no tty: Ctrl-C stopped it and it said so", p.returncode == 0 and "stopped" in out, (p.returncode, out[-120:]))
 
-# TWICE: the port is busy (another copy of this app): it says so and exits 1, the first keeps serving
+# TWICE: the port is busy (another copy of this app): the second moves to the next port and says so
 c1 = Console(app_dir=clone)
 check("first copy serves", wait_port(c1.port, 10))
 c2 = Console(app_dir=clone, port=c1.port)
-check("second copy on the same port says the port is taken", c2.wait_for("is taken", 10), c2.screen()[-200:])
-check("and exits 1", c2.wait_exit(5) and c2.p.returncode == 1, c2.p.returncode)
+check("second copy on the same port moves to the next one and says so", c2.wait_for("instead", 10), c2.screen()[-200:])
+check("the second serves on the next port", wait_port(c1.port + 1, 10))
 check("the first copy is untouched", http("http://127.0.0.1:%d/health" % c1.port)[0] == 200)
+c2.key("q"); c2.wait_exit()
 c1.key("q"); c1.wait_exit(); c1.kill(); c2.kill()
+# on the machine's shape (PREFIX set) a taken port is an error, never a move: Caddy routes to one port
+c1 = Console(app_dir=clone)
+wait_port(c1.port, 10)
+c3 = Console(app_dir=clone, port=c1.port, env={"PREFIX": "/shopfinder"})
+check("with PREFIX, a taken port says so and exits 1", c3.wait_for("is taken", 10) and c3.wait_exit(5) and c3.p.returncode == 1)
+c1.key("q"); c1.wait_exit(); c1.kill(); c3.kill()
+
+# the settings gear: local only, keys by shape, tested for real with a key of the right shape
+import json
+import urllib.request
+c1 = Console(app_dir=clone, data_dir=clone)
+wait_port(c1.port, 10)
+base = "http://127.0.0.1:%d" % c1.port
+st, body = http(base + "/settings/state")
+j = json.loads(body)
+check("settings/state on the machine it runs on: 200 with the three providers, no key values", st == 200 and set(j["keys"]) == {"google", "anthropic", "groq"} and "value" not in body.decode(), body[:200])
+req = urllib.request.Request(base + "/settings/state", headers={"X-Forwarded-For": "1.2.3.4"})
+try:
+    urllib.request.urlopen(req, timeout=5); st = 200
+except urllib.error.HTTPError as e:
+    st = e.code
+check("settings/state through a proxy (X-Forwarded-For): 404, the public app cannot see the keys", st == 404)
+fake_note = ("maps key\n" + "AIza" + "S" * 35 + "\n\nanthropic\n" + "sk-ant-" + "api03-" + "x" * 60 + "\n").encode()
+req = urllib.request.Request(base + "/settings/import", data=fake_note, headers={"Content-Type": "text/plain"}, method="POST")
+with urllib.request.urlopen(req, timeout=10) as r:
+    j = json.loads(r.read())
+check("settings/import: two keys found by shape and written", sorted(j["written"]) == ["anthropic", "google"], j)
+check("the key files are 0600 in the data folder", oct(os.stat(os.path.join(clone, "google_maps_key")).st_mode & 0o777) == "0o600")
+check("state says the file is the source", j["keys"]["google"]["source"] == "file google_maps_key")
+st, body = http(base + "/settings/test?provider=google", timeout=60)
+j = json.loads(body)
+check("settings/test with a key of the right shape that is not real: rejected, said plainly (a real Google answer)", j["state"] in ("rejected", "unclear") and j.get("apis") is not None, j)
+req = urllib.request.Request(base + "/settings/import", data=b"\x89PNG\x00\x00", headers={"Content-Type": "text/plain"}, method="POST")
+try:
+    urllib.request.urlopen(req, timeout=5); st = 200
+except urllib.error.HTTPError as e:
+    st = e.code
+check("settings/import of a binary file: 400", st == 400)
+req = urllib.request.Request(base + "/settings/import", data=b"no keys in here\n", headers={"Content-Type": "text/plain"}, method="POST")
+with urllib.request.urlopen(req, timeout=5) as r:
+    j = json.loads(r.read())
+check("settings/import of a note without keys: written [] and a note", j["written"] == [] and "no key" in j["note"])
+c1.key("q"); c1.wait_exit(); c1.kill()
+for n in ("google_maps_key", "anthropic_key"):
+    try:
+        os.remove(os.path.join(clone, n))
+    except OSError:
+        pass
 
 # ABSENT: not a git clone: u says so plainly and keeps serving
 nogit = clone + "-nogit"
@@ -136,10 +185,13 @@ check("the terminal is restored on the way out", bool(after[3] & ICANON))
 c.kill()
 
 # update_pools.py with no key at all: exit 2 and a sentence naming the file
+import tempfile
 env = {k: v for k, v in os.environ.items() if k not in ("ANTHROPIC_API_KEY", "GROQ_API_KEY")}
 env["SHOPFINDER_DATA"] = slow
-p = subprocess.run([PY, os.path.join(APP, "update_pools.py")], capture_output=True, text=True, env=env, timeout=30)
-check("no key: exit 2 naming anthropic_key", p.returncode == 2 and "anthropic_key" in p.stdout, (p.returncode, p.stdout[-200:]))
+env["KEYRING_HOME"] = tempfile.mkdtemp()      # an EMPTY keyring: on this phone the real one would hand over the key (and did, once: a full Haiku run inside a test)
+# the CLONE's copy: the app folder itself holds the real key files (Marko keeps them there since 13.9.2026)
+p = subprocess.run([PY, os.path.join(clone, "update_pools.py")], capture_output=True, text=True, env=env, timeout=30)
+check("no key anywhere (no env, no file, an empty keyring): exit 2 naming anthropic_key", p.returncode == 2 and "anthropic_key" in p.stdout, (p.returncode, p.stdout[-200:]))
 
 # update_pools.py with a wrong key: the pool stays 'Unknown', the run completes, pools.json is written
 import tempfile

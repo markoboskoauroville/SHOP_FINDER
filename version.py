@@ -9,6 +9,7 @@ Kept in its own file so selfupdate.py can read it off origin/main with `git show
 with the one installed, without importing serve.py.
 
 v1 is the first numbered version (13.9.2026): everything before it was the unnumbered 12.9.2026 app.
+v2 (13.9.2026): the settings gear, the keys tested with the keyring's probes, the port picked when taken.
 """
 
-APP_VERSION = 1
+APP_VERSION = 2

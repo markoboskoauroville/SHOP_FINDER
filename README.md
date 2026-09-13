@@ -19,6 +19,14 @@ official pool pages every morning.
 9.9.2026, west), Bazeni Mladost outdoor, Zimsko plivalište Mladost, Utrina, Šalata, Svetice, Jelkovec,
 Iver. The list is in `public/index.html` and again in `update_pools.py`; change both.
 
+## How to install (Termux)
+
+    curl -fsSL https://raw.githubusercontent.com/markoboskoauroville/SHOP_FINDER/main/install-termux.sh | bash
+
+One line, no token: the repository is public and holds no key. It clones to
+`~/SHOP_FINDER`, puts `mapool` on the PATH, and says what to do next. Keys come from the
+keyring (`keyring get anthropic`, `keyring get google`) or from the ⚙ gear on the page.
+
 ## On the phone: `mapool`
 
     mapool             start the server, the page opens; the console has the keys every app here has:
@@ -30,6 +38,20 @@ Iver. The list is in `public/index.html` and again in `update_pools.py`; change 
 The U key fetches GitHub, shows the installed and the available version (`version.py`, one whole
 number), asks for `y`, pulls with `--ff-only` and restarts itself on the same port. Without a
 terminal (systemd on the machine, nohup, a pipe) there are no keys: it serves, Ctrl-C stops it.
+
+## The settings gear (v17)
+
+⚙ at the far end of the controls row. On the machine the page runs on (a phone, a Mac) it shows
+which keys the server holds (Google Maps, Anthropic, Groq) and where from (environment, a 0600
+file in the data folder, or the keyring), a **choose a key file …** picker that stores the keys
+found by shape, and a **test** per key that asks the provider for the smallest real thing it sells
+with the keyring's probes (`probes.py`, vendored from KEYRING_TERMUX). A Google key restricted to
+Places says `works for Places: Places ✓ · Tiles not enabled · Geocoding ✗`. Behind the pages.dev
+door the settings addresses answer 404 and the panel says the keys live on the machine.
+
+The server never fails to start because a port is taken (`portpick.py`): 8080, then the next
+fifteen, then any, and the banner says which. On the machine (PREFIX set) a taken port is an error
+for systemd, never a move, because Caddy routes to one number.
 
 ## The page (v16, 13.9.2026)
 

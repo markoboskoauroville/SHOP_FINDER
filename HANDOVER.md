@@ -145,6 +145,27 @@ laps and money and monthly/yearly reports; and "mapool, build this as a global r
   pid, the data untouched, idempotent). Not tested: the page in a browser (code inspection and
   node on its functions only), Termux:Boot, the machine's systemd path.
 
+## 13.9.2026, later: v2 of the server, v17 of the page
+
+- **The settings gear** (Marko: "add a settings gear to this app; file pick the API keys and test
+  them; check my API Key Tester application and use their code"): serve.py answers
+  `/settings/state`, `/settings/import` (POST, the picked file's text) and `/settings/test?provider=`
+  only to a request made on the same machine with no proxy header; through Caddy or the pages.dev
+  door they are 404. The probes are `probes.py`, the exact file of KEYRING_TERMUX with a header
+  saying so (fix it there, copy it back). The keys go to the data folder as 0600 files, written
+  beside their name and renamed over.
+- **The keys are in the app folder on the phone** (`google_maps_key`, `anthropic_key`, 0600,
+  ignored by git) because Marko asked for them in the installation directory; the same keys are in
+  the keyring (`keyring get google`, `keyring get anthropic`), which serve.py and update_pools.py
+  ask when neither the environment nor the file has one.
+- **portpick.py** (from KEYRING_TERMUX, from Maha Transcribe): the app never fails to start on
+  the phone; with PREFIX it still refuses, for systemd.
+- **The four tests grew** (36 + 22 + 46 + 16 checks): the gear's three addresses, local and through
+  a proxy, a picked file of the right shapes written 0600, a test with a key of the right shape
+  that Google rejects for real, the second copy moving to the next port, and the no-key case run
+  against the clone (the app folder itself holds the real key files now; the first version of that
+  test found them and ran a whole Haiku update inside a test).
+
 ## Still to do
 
 - Restrict the Google key by IP to the machine and by API (Places API (New), Map Tiles API) in the

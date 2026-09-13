@@ -206,7 +206,7 @@ def make_clone(version=1, tag="v1"):
 
 def copy_app(dst, version):
     import shutil
-    for name in ("serve.py", "console.py", "selfupdate.py", "update_pools.py", "mapool"):
+    for name in ("serve.py", "console.py", "selfupdate.py", "update_pools.py", "mapool", "probes.py", "portpick.py"):
         shutil.copy(os.path.join(APP, name), os.path.join(dst, name))
     if not os.path.isdir(os.path.join(dst, "public")):
         shutil.copytree(os.path.join(APP, "public"), os.path.join(dst, "public"))

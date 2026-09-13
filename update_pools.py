@@ -52,8 +52,9 @@ MAX_WORKERS = 1
 SNIPPET_CHARS = 4000
 
 
-def _key(env_name, file_name):
-    """A key from the environment, or from a file in the data folder (never inside the repo)."""
+def _key(env_name, file_name, provider=""):
+    """A key from the environment, or from a file in the data folder (never inside the repo), or
+    from the keyring on this machine (`keyring get <provider>`, KEYRING_TERMUX) when it is installed."""
     k = (os.environ.get(env_name) or "").strip()
     if k:
         return k
@@ -65,15 +66,23 @@ def _key(env_name, file_name):
                 return k
         except OSError:
             pass
+    if provider:
+        try:
+            import subprocess
+            p = subprocess.run(["keyring", "get", provider], capture_output=True, text=True, timeout=10)
+            if p.returncode == 0 and p.stdout.strip():
+                return p.stdout.strip()
+        except (OSError, subprocess.TimeoutExpired):
+            pass
     return ""
 
 
 def anthropic_key():
-    return _key("ANTHROPIC_API_KEY", "anthropic_key")
+    return _key("ANTHROPIC_API_KEY", "anthropic_key", "anthropic")
 
 
 def groq_key():
-    return _key("GROQ_API_KEY", "groq_key")
+    return _key("GROQ_API_KEY", "groq_key", "groq")
 
 
 OFFICIAL = "https://www.sportskiobjekti.hr/"
