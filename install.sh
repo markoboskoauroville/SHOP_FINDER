@@ -2,8 +2,9 @@
 # install.sh, run ON the Oracle machine: the Shop & Pool Finder as a service on 127.0.0.1:8900 under
 # /shopfinder, updated from GitHub every minute (the shape of MAHA_TRANSCRIBE_FLASK/install.sh), and
 # a timer that refreshes the pool hours every morning. Caddy routes /shopfinder/* here
-# (ABLETON_TEACHER/oracle/second.sh). The Groq key is NOT in the repo: it is read from
-# /home/ubuntu/.shopfinder/groq_key, which deploy.sh (from the Mac) writes over ssh.
+# (ABLETON_TEACHER/oracle/second.sh). No key is in the repo: update_pools.py reads
+# /home/ubuntu/.shopfinder/anthropic_key (Claude Haiku; groq_key is the fallback), which deploy.sh
+# (from the Mac) writes over ssh.
 #   ssh teacher-vm 'bash -s' < install.sh
 set -euo pipefail
 REPO=https://github.com/markoboskoauroville/SHOP_FINDER.git
@@ -93,9 +94,9 @@ sudo systemctl restart shopfinder
 sleep 2
 systemctl is-active shopfinder
 curl -s http://127.0.0.1:8900/shopfinder/health; echo
-if [ -s "$DATA/groq_key" ]; then
+if [ -s "$DATA/anthropic_key" ] || [ -s "$DATA/groq_key" ]; then
   echo "== the first pool hours"
   sudo systemctl start shopfinder-pools.service && curl -s http://127.0.0.1:8900/shopfinder/health; echo
 else
-  echo "== no Groq key yet at $DATA/groq_key: from the Mac, bash deploy.sh key"
+  echo "== no key yet at $DATA/anthropic_key (Claude Haiku reads the pool pages): from the Mac, bash deploy.sh key"
 fi

@@ -1,4 +1,4 @@
-# HANDOVER: SHOP_FINDER (12.9.2026)
+# HANDOVER: SHOP_FINDER (12.9.2026, updated 13.9.2026)
 
 ## What it is
 
@@ -105,13 +105,54 @@ remembered in the browser (localStorage sf_maps).
 - **The refresh button is public** (anyone with the URL). serve.py refuses a second run within ten
   minutes and runs one at a time; the timer refreshes every morning anyway.
 
+## 13.9.2026: the console, mapool, the week, the visits, Claude Haiku
+
+Marko, in one morning: "Q as a quit key, U as update key, the same as my other Termux apps";
+the street and the B/N distances in every shop title; "you always need to use Haiku to actually
+scrape the working hours", a compact weekly list, Špansko first, a visit counter with hours, km,
+laps and money and monthly/yearly reports; and "mapool, build this as a global run command".
+
+- **The console is console.py**, the shape of MAHA_TRANSCRIBE_TERMUX_TERMINAL/console.py (and
+  GOOGLE_TTS_STT, MAHA_COMMUTE): plain lines, never a box; `q quit  o open page  u check for
+  update  r restart`; U checks first and shows both numbers, then asks for y; the restart is an
+  execv on the main thread (same pid, same port). selfupdate.py reads version.py off origin/main;
+  version.py holds one whole number (modules/versioning.md), v1 on 13.9.2026. serve.py stays
+  standard library; the http.server runs in a daemon thread while the main thread reads keys.
+  `is_interactive()` treats "no controlling terminal" (ENOTTY from tcgetpgrp) as interactive: a
+  pty from a harness cannot SIGTTIN the process, only a real background job can.
+- **mapool** replaces shopfinder-v1.sh (the nohup menu). `mapool install` writes a wrapper into
+  $PREFIX/bin and ~/.local/bin (a wrapper, not a symlink: the repo is on the sdcard, mounted
+  noexec). On this phone the clone is
+  `~/storage/downloads/claudecode/poolandshopfinder/SHOP_FINDER`.
+- **Claude Haiku** (`claude-haiku-4-5`, raw Messages API through urllib, no package) reads each
+  pool's own text (the site's shared lines removed as before) and answers today's ranges, the week
+  as `[{days, hours}]`, a notice. Measured 13.9.2026: eight pools in about a minute, the week on
+  four of them (the others were closed: Šalata's season ended that day, Svetice a technical
+  fault, Zimsko plivalište Mladost closed since March, Utrina a heating cut until 19.9); Iver
+  timed out once on the site's side, so fetch_page tries three times. Groq is the fallback when
+  there is no Anthropic key. The key: `~/.shopfinder/anthropic_key` on the machine (deploy.sh key
+  reads `~/Downloads/API/[Cc]laude*.txt` on the Mac); on the phone mapool passes it in the
+  environment from `~/storage/downloads/Api/Claude_api.txt`.
+- **The visit log is in the browser** (localStorage `sf_visits`), not on the machine: the
+  machine's addresses are public behind pages.dev and a public counter would be anyone's. Copy /
+  paste moves it between phones. Sorting: visits desc, then Špansko, then distance.
+- **The four tests** are in tests/ (`python3 tests/run_all.py`, about four minutes on the phone):
+  test1 the mechanism (selfupdate against a bare repo, week_list, the page's arithmetic in node),
+  test2 the running app on a pty (banner, keys, a stand-in termux-open-url, q leaves nothing),
+  test3 the ugly cases (no tty, a busy port, no .git, GitHub unreachable, n, a stray key, r, a pool
+  update in the way, SIGHUP, Ctrl-C, the terminal restored, no key, a wrong key against the real
+  API), test4 the upgrade (v1 running with its pools.json, v2 lands, u, y: v2 on the same port and
+  pid, the data untouched, idempotent). Not tested: the page in a browser (code inspection and
+  node on its functions only), Termux:Boot, the machine's systemd path.
+
 ## Still to do
 
 - Restrict the Google key by IP to the machine and by API (Places API (New), Map Tiles API) in the
   Google Cloud console; enable the Map Tiles API there if Google's own tiles are wanted in paid mode
   (config.js reports googleTiles:false until it works; the journal says why).
-- The Termux copy on the phone still runs the old five-pool version at ~/storage/downloads/webserver;
-  copy this repo to ~/storage/downloads/SHOP_FINDER and run shopfinder-v1.sh, or just open
-  shopfinder.pages.dev.
+- The old Termux:Boot script on the phone (~/.termux/boot/start-server.sh) still points at the old
+  five-pool copy in ~/storage/downloads/webserver; `mapool boot` writes the new one, then delete the old.
+- Put the Anthropic key on the machine (`bash deploy.sh key` from the Mac) so the morning timer uses
+  Haiku; until then it falls back to Groq and pools.json has no week.
 - Overpass has no opening hours for some shops (they stay listed as "hours unknown" under Today);
   Google knows more. That is the trade of the free option.

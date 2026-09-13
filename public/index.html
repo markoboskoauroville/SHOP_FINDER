@@ -64,6 +64,28 @@
   .maplink.transit { color: var(--open); border-color: var(--open); }
   .navhint { font-size: 0.78rem; color: var(--muted); }
   .official { color: var(--pool); font-size: 0.82rem; text-decoration: none; }
+  .lm { color: var(--muted); font-weight: 400; font-size: 0.82rem; white-space: nowrap; }
+  .street { color: var(--text); font-weight: 400; }
+  .week { font-size: 0.84rem; margin: 2px 0 8px; line-height: 1.6; }
+  .week .wd { color: var(--muted); }
+  .week .sep { color: var(--border); }
+  .visitrow { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 0 0 8px; }
+  .visitbtn { background: var(--pool); color: #06262a; padding: 8px 14px; border-radius: 20px; font-weight: 700; }
+  .vcount { color: var(--pool); font-size: 0.84rem; font-weight: 600; }
+  button.small { padding: 6px 12px; font-size: 0.82rem; border-radius: 20px; }
+  .stats { background: rgba(56,189,248,0.06); border: 1px solid rgba(56,189,248,0.3); border-radius: 10px; padding: 10px 12px; margin: 0 0 10px; font-size: 0.84rem; cursor: default; }
+  .stats h4 { margin: 8px 0 4px; font-size: 0.8rem; color: var(--pool); text-transform: uppercase; letter-spacing: .04em; }
+  .stats table { border-collapse: collapse; width: 100%; }
+  .stats th, .stats td { text-align: right; padding: 3px 6px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  .stats th:first-child, .stats td:first-child { text-align: left; }
+  .stats th { color: var(--muted); font-weight: 600; font-size: 0.76rem; }
+  .stats input { width: 58px; background: var(--card); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 5px; font-size: 0.84rem; text-align: right; }
+  .stats .del { background: transparent; color: var(--closed); border: 1px solid var(--closed); padding: 3px 8px; font-size: 0.78rem; border-radius: 6px; }
+  .stats .tools { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .stats .tools button { background: var(--card); color: var(--muted); border: 1px solid var(--border); padding: 5px 10px; font-size: 0.78rem; border-radius: 6px; }
+  .tablewrap { overflow-x: auto; }
+  #report { display: none; margin-bottom: 12px; }
+  #report .stats { cursor: default; }
   .brand-tag { font-size: 0.72rem; padding: 1px 7px; border-radius: 10px; margin-left: 8px; vertical-align: middle; font-weight: 600; }
   .brand-spar { background: rgba(227,30,36,0.15); color: #ff6b6b; }
   .brand-dm { background: rgba(0,144,209,0.15); color: #4cb8e8; }
@@ -87,7 +109,7 @@
   <div id="verBadge" style="position:fixed;top:6px;right:8px;z-index:9999;
     font-size:10px;font-weight:400;color:#3a4048;background:transparent;
     border:none;padding:2px 4px;
-    pointer-events:none;font-family:system-ui,sans-serif;">v15</div>
+    pointer-events:none;font-family:system-ui,sans-serif;">v16</div>
   <div class="controls">
     <div class="toggle active" id="danasToggle">Today</div>
     <div class="toggle" id="mapsToggle" title="Map source">OSM · free</div>
@@ -102,6 +124,7 @@
     <span style="display:inline-flex;gap:8px;white-space:nowrap;">
       <div class="pill" data-brand="pool">Pools</div>
       <button id="updateBtn" class="ghost" title="Refresh pool hours">↻</button>
+      <button id="reportBtn" class="ghost" title="Visit reports, all pools">📊</button>
     </span>
     <div class="pill" data-brand="spar">Spar</div>
     <div class="pill" data-brand="dm">Dm</div>
@@ -116,12 +139,23 @@
   </div>
 
   <div id="status"></div>
+  <div id="report"></div>
   <div id="results"></div>
 
 <script src="config.js"></script>
 <script>
 /* =====================================================================================
-   Store & Pool Finder, v15 (12.9.2026)
+   Store & Pool Finder, v16 (13.9.2026)
+
+   v16, Marko's asks of 13.9.2026:
+     - every shop's title carries its street and, in parentheses, the distance in km from British
+       Square (B) and from Nova TV (N): "Spar · Ilica 12 (B 0.4 · N 7.1)"
+     - the pools show the week for the general public as one compact list (Mon-Fri 06:30-20:00,
+       Sat-Sun ...), read from the official pages by Claude Haiku on the machine (update_pools.py)
+     - Bazen Špansko, the newest, comes first; a pool with more visits comes before it
+     - a "Visited" button per pool counts the visits; each visit takes hours, km, laps and euros;
+       per pool and for all pools there are monthly and yearly totals. The log lives in THIS browser
+       (localStorage sf_visits): copy it out and paste it in to move it to another phone.
 
    TWO MAP OPTIONS, Marko's rule: "always a free option and a paid option".
      free  = OpenStreetMap: OSM tiles (Leaflet), Overpass for the shops and their opening_hours,
@@ -147,6 +181,13 @@ const OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.k
 const LEAFLET = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet";
 const OSRM_FOOT = "https://routing.openstreetmap.de/routed-foot/route/v1/foot/";
 const ZAGREB = { lat: 45.8131, lng: 15.9775 };
+/* the two fixed points every shop's title measures from (OpenStreetMap, 13.9.2026):
+   B = Britanski trg (British Square), N = Nova TV (Buzinski krči 1, Buzin) */
+const LANDMARKS = [
+  { key: "B", name: "British Square", lat: 45.81314, lng: 15.96501 },
+  { key: "N", name: "Nova TV",        lat: 45.75517, lng: 15.99101 }
+];
+const PRIORITY_POOL = "pool-spansko";   // the newest pool (opened 9.9.2026) comes first until the visits say otherwise
 
 let provider = "osm";        // "osm" (free) | "google" (paid)
 
@@ -329,6 +370,7 @@ async function overpassSearch(brandKey, center, radius) {
         if (lat == null || lng == null) return null;
         const oh = ohInfo(t.opening_hours);
         return { id: el.type + "/" + el.id, name: t.name || t.brand || b.label, addr: osmAddr(t), lat, lng,
+                 street: [t["addr:street"], t["addr:housenumber"]].filter(Boolean).join(" "),
                  openNow: oh.openNow, todayHours: oh.today, nextOpen: oh.next,
                  mapsUri: gmapsDir(lat, lng), brand: brandKey, isPool: false };
       }).filter(Boolean);
@@ -385,6 +427,7 @@ async function placesQuery(q, center, radius, n) {
 async function placesSearch(q, brandKey, center, radius) {
   return (await placesQuery(q, center, radius, 20)).map(p => ({
     id: p.id, name: p.name || "Store", addr: p.addr || "", lat: p.lat, lng: p.lng,
+    street: (p.addr || "").split(",")[0].trim(),
     openNow: p.openNow === true ? true : (p.openNow === false ? false : undefined),
     todayHours: hoursToday(p.weekday), nextOpen: nextOpen(p.weekday),
     mapsUri: p.mapsUri || gmapsDir(p.lat, p.lng), brand: brandKey, isPool: false
@@ -407,6 +450,7 @@ function poolPlace(p, live, updated, notice) {
   return {
     id: p.id, name: p.name, addr: p.addr || "", lat: p.lat, lng: p.lng, brand: "pool", isPool: true,
     openNow: live.openNow, todayHours: live.todayHours, alert: notice || POOL_NOTE, url: p.url || OFFICIAL,
+    week: Array.isArray(p.week) ? p.week.filter(w => w && w.days && w.hours) : [],
     updated: updated || null,
     dist: userPos ? distMeters(userPos, { lat: p.lat, lng: p.lng }) : null,
     mapsUri: live.mapsUri || gmapsDir(p.lat, p.lng)
@@ -611,6 +655,7 @@ function render() {
     return;
   }
   const dayLbl = EN_DAYS[new Date().getDay()];
+  const counts = visitCounts();
   show.forEach(s => {
     let badge, cls;
     if (s.openNow === true) { badge = "Open now"; cls = "open"; }
@@ -621,13 +666,16 @@ function render() {
     el.className = "store" + (s.isPool ? " pool" : "");
     let html =
       '<div class="store-top">' +
-        '<div class="store-name">' + esc(s.name) + '<span class="brand-tag ' + b.cls + '">' + b.label + '</span></div>' +
+        '<div class="store-name">' + esc(s.name) + (s.isPool ? '' : shopTitleTail(s)) + '<span class="brand-tag ' + b.cls + '">' + b.label + '</span></div>' +
         (s.dist != null ? '<div class="dist">' + fmtDist(s.dist) + '</div>' : '') +
       '</div>' +
       '<div class="badge ' + cls + '">' + badge + '</div>' +
       (s.openNow === false && s.nextOpen ? ' <span class="nextopen">' + esc(s.nextOpen) + '</span>' : '');
     if (s.todayHours) html += '<div class="hours"><span class="lbl">Today (' + dayLbl + '): </span>' + esc(s.todayHours) + '</div>';
+    if (s.isPool && s.week && s.week.length) html += '<div class="week">' + s.week.map(w =>
+      '<span class="wk"><span class="wd">' + esc(w.days) + '</span> ' + esc(w.hours) + '</span>').join('<span class="sep"> · </span>') + '</div>';
     if (s.isPool && s.alert) html += '<div class="alert">' + esc(s.alert) + '</div>';
+    if (s.isPool) html += visitRowHtml(s, counts);
     if (s.isPool && s.updated) html += '<div class="navhint">official source · updated ' + fmtUpdated(s.updated) + '</div>';
     const links = provider === "google"
       ? '<a class="maplink" href="' + s.mapsUri + '" target="_blank" rel="noopener">Open in Google Maps</a>'
@@ -640,9 +688,168 @@ function render() {
         '<span class="navhint">tap card for walk route</span>' +
       '</div>';
     el.innerHTML = html;
-    el.addEventListener("click", ev => { if (ev.target.closest("a")) return; showRouteTo(s); });
+    el.addEventListener("click", ev => { if (ev.target.closest("a, button, input, .stats")) return; showRouteTo(s); });
     wrap.appendChild(el);
   });
+  paintReport();
+}
+
+/* ---------- the shop title: street, and the km from British Square (B) and Nova TV (N) ---------- */
+function kmPlain(m) { return (m / 1000).toFixed(1); }
+function shopTitleTail(s) {
+  const pos = { lat: s.lat, lng: s.lng };
+  const lm = LANDMARKS.map(l => l.key + " " + kmPlain(distMeters(l, pos))).join(" · ");
+  return (s.street ? ' <span class="street">· ' + esc(s.street) + '</span>' : '') + ' <span class="lm">(' + lm + ')</span>';
+}
+
+/* ---------- the visit log (Marko, 13.9.2026): one tap when you arrive, the numbers later ----------
+   Kept in this browser (localStorage sf_visits): [{id, pool, at, h, km, laps, eur}]. "copy" puts the
+   whole log on the clipboard as JSON and "paste" merges one back in, so it can move between phones. */
+const VISITS_KEY = "sf_visits";
+const openStats = new Set();
+let reportOn = false;
+function loadVisits() { try { const v = JSON.parse(localStorage.getItem(VISITS_KEY) || "[]"); return Array.isArray(v) ? v : []; } catch (e) { return []; } }
+function saveVisits(v) { try { localStorage.setItem(VISITS_KEY, JSON.stringify(v)); } catch (e) { setStatus("Could not save the visit (browser storage is off)."); } }
+function num(x) { const n = parseFloat(x); return isFinite(n) ? n : 0; }
+function visitCounts() { const c = {}; for (const v of loadVisits()) c[v.pool] = (c[v.pool] || 0) + 1; return c; }
+function poolName(id) { const p = POOLS.find(x => x.id === id); return p ? p.name : id; }
+function addVisit(poolId) {
+  const v = loadVisits();
+  const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  v.push({ id, pool: poolId, at: new Date().toISOString(), h: 0, km: 0, laps: 0, eur: 0 });
+  saveVisits(v);
+  return id;
+}
+function updateVisit(id, field, value) {
+  const v = loadVisits(); const x = v.find(a => a.id === id); if (!x) return;
+  x[field] = Math.max(0, num(value)); saveVisits(v);
+}
+function deleteVisit(id) { saveVisits(loadVisits().filter(a => a.id !== id)); }
+function poolOrder() {
+  const c = visitCounts();
+  return (a, b) => {
+    const va = c[a.id] || 0, vb = c[b.id] || 0;
+    if (va !== vb) return vb - va;
+    if (a.id === PRIORITY_POOL) return -1;
+    if (b.id === PRIORITY_POOL) return 1;
+    return (a.dist == null ? Infinity : a.dist) - (b.dist == null ? Infinity : b.dist);
+  };
+}
+function sumVisits(list) {
+  return list.reduce((t, v) => ({ n: t.n + 1, h: t.h + num(v.h), km: t.km + num(v.km), laps: t.laps + num(v.laps), eur: t.eur + num(v.eur) }),
+                     { n: 0, h: 0, km: 0, laps: 0, eur: 0 });
+}
+function fmtN(x, d) { return (Math.round(x * 100) / 100).toFixed(d == null ? (Number.isInteger(x) ? 0 : 1) : d); }
+function periodKey(iso, period) { return period === "year" ? iso.slice(0, 4) : iso.slice(0, 7); }
+function periodLabel(k) { if (k.length === 4) return k; const M = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]; return M[parseInt(k.slice(5), 10) - 1] + " " + k.slice(0, 4); }
+function totalsRow(label, t) {
+  return '<tr><td>' + esc(label) + '</td><td>' + t.n + '</td><td>' + fmtN(t.h, 1) + '</td><td>' + fmtN(t.km, 1) + '</td><td>' + fmtN(t.laps, 0) + '</td><td>' + fmtN(t.eur, 2) + '</td></tr>';
+}
+function reportTable(list, period, byPool) {
+  const groups = {};
+  for (const v of list) { const k = periodKey(v.at, period); (groups[k] = groups[k] || []).push(v); }
+  const keys = Object.keys(groups).sort().reverse();
+  if (!keys.length) return '<div class="navhint">no visits yet</div>';
+  let rows = "";
+  for (const k of keys) {
+    rows += totalsRow(periodLabel(k), sumVisits(groups[k]));
+    if (byPool) {
+      const per = {};
+      for (const v of groups[k]) (per[v.pool] = per[v.pool] || []).push(v);
+      for (const pid of Object.keys(per).sort((a, b) => per[b].length - per[a].length))
+        rows += totalsRow("   " + poolName(pid).split(" – ")[0].split(" (")[0], sumVisits(per[pid])).replace("<tr>", '<tr style="color:var(--muted)">');
+    }
+  }
+  return '<div class="tablewrap"><table><tr><th>' + (period === "year" ? "year" : "month") + '</th><th>visits</th><th>h</th><th>km</th><th>laps</th><th>€</th></tr>' + rows + '</table></div>';
+}
+function visitRowHtml(s, counts) {
+  const n = counts[s.id] || 0;
+  const month = loadVisits().filter(v => v.pool === s.id && periodKey(v.at, "month") === periodKey(new Date().toISOString(), "month")).length;
+  return '<div class="visitrow">' +
+    '<button class="visitbtn" data-act="visit" data-pool="' + s.id + '">Visited ✓</button>' +
+    '<span class="vcount">' + n + ' visit' + (n === 1 ? '' : 's') + (n ? ' · ' + month + ' this month' : '') + '</span>' +
+    '<button class="ghost small" data-act="stats" data-pool="' + s.id + '">' + (openStats.has(s.id) ? 'hide stats' : 'stats') + '</button>' +
+    '</div>' + (openStats.has(s.id) ? statsHtml(s.id) : '');
+}
+function statsHtml(poolId) {
+  const list = loadVisits().filter(v => v.pool === poolId).sort((a, b) => b.at.localeCompare(a.at));
+  const now = new Date().toISOString();
+  const thisMonth = list.filter(v => periodKey(v.at, "month") === periodKey(now, "month"));
+  const thisYear = list.filter(v => periodKey(v.at, "year") === periodKey(now, "year"));
+  let h = '<div class="stats">';
+  h += '<h4>totals</h4><div class="tablewrap"><table><tr><th></th><th>visits</th><th>h</th><th>km</th><th>laps</th><th>€</th></tr>' +
+       totalsRow("this month", sumVisits(thisMonth)) + totalsRow("this year", sumVisits(thisYear)) + totalsRow("all time", sumVisits(list)) + '</table></div>';
+  h += '<h4>visits</h4>';
+  if (!list.length) h += '<div class="navhint">none yet: tap Visited when you arrive</div>';
+  else {
+    h += '<div class="tablewrap"><table><tr><th>when</th><th>h</th><th>km</th><th>laps</th><th>€</th><th></th></tr>';
+    for (const v of list.slice(0, 30)) {
+      const d = new Date(v.at);
+      const inp = f => '<td><input type="number" min="0" step="' + (f === "laps" ? "1" : "0.1") + '" inputmode="decimal" value="' + (num(v[f]) || "") + '" data-act="edit" data-vid="' + v.id + '" data-field="' + f + '"></td>';
+      h += '<tr><td>' + fmtUpdated(d) + '</td>' + inp("h") + inp("km") + inp("laps") + inp("eur") +
+           '<td><button class="del" data-act="del" data-vid="' + v.id + '" title="remove this visit">×</button></td></tr>';
+    }
+    h += '</table></div>';
+    if (list.length > 30) h += '<div class="navhint">the first 30 of ' + list.length + '; the reports count them all</div>';
+    h += '<h4>by month</h4>' + reportTable(list, "month", false);
+    h += '<h4>by year</h4>' + reportTable(list, "year", false);
+  }
+  h += '<div class="tools"><button data-act="copy">copy the whole log</button><button data-act="paste">paste a log in</button></div>';
+  return h + '</div>';
+}
+function paintReport() {
+  const el = document.getElementById("report");
+  if (!reportOn) { el.style.display = "none"; el.innerHTML = ""; return; }
+  const list = loadVisits();
+  el.style.display = "block";
+  el.innerHTML = '<div class="stats"><h4>all pools · by month</h4>' + reportTable(list, "month", true) +
+                 '<h4>all pools · by year</h4>' + reportTable(list, "year", true) +
+                 '<div class="tools"><button data-act="copy">copy the whole log</button><button data-act="paste">paste a log in</button></div></div>';
+}
+async function copyLog() {
+  const text = JSON.stringify(loadVisits());
+  try { await navigator.clipboard.writeText(text); setStatus("The visit log is on the clipboard (" + loadVisits().length + " visits)."); }
+  catch (e) { window.prompt("Copy this:", text); }
+}
+function pasteLog() {
+  const text = window.prompt("Paste a visit log (JSON):", "");
+  if (!text) return;
+  let incoming;
+  try { incoming = JSON.parse(text); } catch (e) { setStatus("That is not a visit log."); return; }
+  if (!Array.isArray(incoming)) { setStatus("That is not a visit log."); return; }
+  const v = loadVisits(); const have = new Set(v.map(a => a.id)); let added = 0;
+  for (const a of incoming) if (a && a.id && a.pool && a.at && !have.has(a.id)) { v.push({ id: a.id, pool: a.pool, at: a.at, h: num(a.h), km: num(a.km), laps: num(a.laps), eur: num(a.eur) }); added++; }
+  saveVisits(v);
+  setStatus(added + " visit" + (added === 1 ? "" : "s") + " added.");
+  if (window._allPlaces) { window._allPlaces.sort(poolOrder()); render(); }
+}
+function onVisitAction(ev) {
+  const t = ev.target.closest("[data-act]");
+  if (!t) return;
+  const act = t.dataset.act;
+  if (act === "edit") return;                       // handled on change
+  ev.stopPropagation();
+  if (act === "visit") {
+    addVisit(t.dataset.pool);
+    openStats.add(t.dataset.pool);
+    setStatus("Visit logged at " + poolName(t.dataset.pool) + ". Enter the hours, km, laps and € below when you like.");
+    window._allPlaces.sort(poolOrder()); render();
+  } else if (act === "stats") {
+    if (openStats.has(t.dataset.pool)) openStats.delete(t.dataset.pool); else openStats.add(t.dataset.pool);
+    render();
+  } else if (act === "del") {
+    if (window.confirm("Remove this visit?")) { deleteVisit(t.dataset.vid); window._allPlaces.sort(poolOrder()); render(); }
+  } else if (act === "copy") copyLog();
+  else if (act === "paste") pasteLog();
+}
+function onVisitEdit(ev) {
+  const t = ev.target;
+  if (t.dataset.act !== "edit") return;
+  updateVisit(t.dataset.vid, t.dataset.field, t.value);
+  // the totals above the row change with it; the row keeps focus order by re-rendering only when done
+  const card = t.closest(".stats");
+  if (card) { const fresh = document.createElement("div"); fresh.innerHTML = statsHtml(loadVisits().find(v => v.id === t.dataset.vid)?.pool || ""); if (fresh.firstChild) card.replaceWith(fresh.firstChild); }
+  paintReport();
 }
 
 /* ---------- main run ---------- */
@@ -695,6 +902,7 @@ async function run() {
       places = places.concat(await fetchPools());
     }
     places.sort((a, b) => (a.dist == null ? Infinity : a.dist) - (b.dist == null ? Infinity : b.dist));
+    if (wantPools) places.sort(poolOrder());
     window._allPlaces = places;
     if (!userPos && wantPools) note += (note ? " " : "") + "No location: pools shown without distance or route.";
     setStatus(note);
@@ -715,6 +923,10 @@ document.getElementById("radiusOk").addEventListener("click", () => {
   if (activeBrands.size) run(); else setStatus("Pick a category first.");
 });
 document.getElementById("mapsToggle").addEventListener("click", () => setProvider(provider === "google" ? "osm" : "google"));
+document.getElementById("results").addEventListener("click", onVisitAction);
+document.getElementById("results").addEventListener("change", onVisitEdit);
+document.getElementById("report").addEventListener("click", onVisitAction);
+document.getElementById("reportBtn").addEventListener("click", () => { reportOn = !reportOn; paintReport(); });
 
 /* the pool refresh: /update on the same origin. On pages.dev the door relays it to the machine, where
    serve.py starts update_pools.py and answers at once; the page then polls /health until pools.json

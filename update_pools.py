@@ -2,10 +2,12 @@
 """
 update_pools.py: today's public-swim hours for the Zagreb city pools.
 
-Reads each pool's official page on sportskiobjekti.hr, asks Groq to pull out today's hours for the
-public (gradjanstvo) plus any notice, computes open_now from the local time, and writes pools.json.
-The app (public/index.html) reads pools.json from the same origin; when the file is missing it
-falls back to live Google hours on its own.
+Reads each pool's official page on sportskiobjekti.hr, asks Claude Haiku (Marko, 13.9.2026: "you
+always need to use Haiku to actually scrape the working hours") to pull out today's hours for the
+public (gradjanstvo), the whole week as a compact list (Mon-Fri 06:30-20:00, Sat-Sun ...) and any
+notice, computes open_now from the local time, and writes pools.json. Without an Anthropic key it
+falls back to Groq, the extractor of 12.9.2026. The app (public/index.html) reads pools.json from
+the same origin; when the file is missing it falls back to live Google hours on its own.
 
 Standard library only. Runs on the Oracle machine (a timer every morning, and the app's refresh
 button through serve.py), on a phone in Termux, or on a Mac.
@@ -13,7 +15,9 @@ button through serve.py), on a phone in Termux, or on a Mac.
     python3 update_pools.py
 
 Settings, all optional:
-  GROQ_API_KEY     the key; else the file groq_key in SHOPFINDER_DATA, else next to this script
+  ANTHROPIC_API_KEY  the key; else the file anthropic_key in SHOPFINDER_DATA, else next to this script
+  CLAUDE_MODEL     default claude-haiku-4-5 (Haiku, always: the cheap one, the pages are short)
+  GROQ_API_KEY     the fallback; else the file groq_key in SHOPFINDER_DATA, else next to this script
   GROQ_MODEL       the model (or a comma list) to try first; default openai/gpt-oss-120b, then gpt-oss-20b, qwen3.8-27b
   SHOPFINDER_DATA  where pools.json (and groq_key) live; default: the folder of this script
   POOLS_OUT        the exact output path, wins over SHOPFINDER_DATA
@@ -39,18 +43,21 @@ OUT_PATH = os.environ.get("POOLS_OUT") or os.path.join(DATA_DIR, "pools.json")
 GROQ_MODELS = [m.strip() for m in (os.environ.get("GROQ_MODEL") or "").split(",") if m.strip()] + \
               ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b", "llama-3.3-70b-versatile"]
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+CLAUDE_URL = "https://api.anthropic.com/v1/messages"
+CLAUDE_MODEL = (os.environ.get("CLAUDE_MODEL") or "claude-haiku-4-5").strip()
+CLAUDE_MAX_CHARS = 12000        # a pool's own text is 3,000-6,000 characters; Haiku reads it whole
 # One pool at a time: Groq's free tier allows a few thousand tokens a minute, and eight pages at once
 # answered 429 (12.9.2026). A 429 waits what Groq asks and tries again, three times.
 MAX_WORKERS = 1
 SNIPPET_CHARS = 4000
 
 
-def groq_key():
-    """The key from the environment, or from a groq_key file (never inside the repo)."""
-    k = (os.environ.get("GROQ_API_KEY") or "").strip()
+def _key(env_name, file_name):
+    """A key from the environment, or from a file in the data folder (never inside the repo)."""
+    k = (os.environ.get(env_name) or "").strip()
     if k:
         return k
-    for path in (os.path.join(DATA_DIR, "groq_key"), os.path.join(HERE, "groq_key")):
+    for path in (os.path.join(DATA_DIR, file_name), os.path.join(HERE, file_name)):
         try:
             with open(path, encoding="utf-8") as f:
                 k = f.read().strip()
@@ -59,6 +66,14 @@ def groq_key():
         except OSError:
             pass
     return ""
+
+
+def anthropic_key():
+    return _key("ANTHROPIC_API_KEY", "anthropic_key")
+
+
+def groq_key():
+    return _key("GROQ_API_KEY", "groq_key")
 
 
 OFFICIAL = "https://www.sportskiobjekti.hr/"
@@ -104,14 +119,23 @@ def log(msg):
     print("[update_pools] " + msg, flush=True)
 
 
-def fetch_page(url):
-    """Download a page and return its visible text (no tags)."""
+def fetch_page(url, tries=3):
+    """Download a page and return its visible text (no tags). The site answers slowly at times
+    (Iver timed out at 30 s on 13.9.2026 while the seven others came): three tries, then the error."""
     req = urllib.request.Request(url, headers={
         "User-Agent": "Mozilla/5.0 (pool-updater) Python-urllib",
         "Accept-Language": "hr,en;q=0.8",
     })
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        raw = resp.read()
+    for attempt in range(tries):
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                raw = resp.read()
+            break
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            if attempt == tries - 1 or (isinstance(e, urllib.error.HTTPError) and e.code < 500):
+                raise
+            log("  " + url + ": " + repr(e)[:80] + ", trying again")
+            time.sleep(3)
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError:
@@ -172,31 +196,91 @@ def trim_text(text, limit=SNIPPET_CHARS):
     return out[:limit]
 
 
-def call_groq(key, page_text, pool_name, today_iso, weekday_hr, is_holiday, template_lines=frozenset()):
-    """Ask Groq for today's public-swim hours plus a notice, as strict JSON."""
+def prompts(page_text, pool_name, today_iso, weekday_hr, is_holiday, template_lines=frozenset(), limit=SNIPPET_CHARS):
+    """The system and user text for the extractor: today's public-swim hours, the week as a compact
+    list, a notice. Strict JSON back."""
     own = own_text(page_text, template_lines)
-    snippet = own if len(own) <= SNIPPET_CHARS else trim_text(own)
+    snippet = own if len(own) <= limit else trim_text(own, limit)
     system = (
         "You read Croatian municipal swimming-pool web pages and extract the "
-        "public-swim hours (termini za gradjanstvo, rekreativno plivanje) for a specific day. "
-        "Answer with strict minified JSON only, no markdown, no comments."
+        "public-swim hours (termini za gradjanstvo, rekreativno plivanje) for a specific day and for "
+        "the whole week. Answer with strict minified JSON only, no markdown, no comments."
     )
     user = (
         f"Pool: {pool_name}\n"
         f"Today is {today_iso}, weekday in Croatian: {weekday_hr}, "
         f"public holiday today: {'yes' if is_holiday else 'no'}.\n\n"
-        "From the page text below, extract ONLY the public-swim hours that apply "
-        "TODAY for the general public (gradjanstvo), taking into account the weekday, "
-        "any dated notices (obavijest), seasonal (ljetni/zimski) schedules, and holidays.\n"
+        "From the page text below, extract the public-swim hours for the general public "
+        "(gradjanstvo), taking into account the weekday, any dated notices (obavijest), seasonal "
+        "(ljetni/zimski) schedules, and holidays.\n"
         "Return JSON with exactly these keys:\n"
         '{"today_ranges": [["HH:MM","HH:MM"]], "closed_today": false, '
+        '"week": [{"days": "Mon-Fri", "hours": "06:30-20:00"}, {"days": "Sat-Sun", "hours": "08:00-20:00"}], '
         '"notice": "", "confidence": "high|medium|low"}\n'
-        "Rules: use 24h HH:MM. If closed today, today_ranges=[] and closed_today=true. "
-        "If you cannot tell, today_ranges=[] and closed_today=null and confidence=low. "
+        "Rules: use 24h HH:MM. today_ranges = the ranges that apply TODAY. If closed today, "
+        "today_ranges=[] and closed_today=true. If you cannot tell, today_ranges=[] and "
+        "closed_today=null and confidence=low.\n"
+        "week = the CURRENT schedule for the general public, one entry per group of days with the same "
+        "hours, in week order, as compact as possible: English day abbreviations Mon Tue Wed Thu Fri Sat "
+        "Sun, ranges like Mon-Fri, Sat-Sun, single days like Sat; several ranges in one day joined with "
+        "a comma (\"06:30-09:00, 12:00-20:00\"); a day the pool is closed to the public gets hours "
+        "\"closed\"; a public-holiday rule gets days \"Holidays\". Use the schedule in force now (the "
+        "season that includes today); leave out lessons, clubs, schools, and anything not for the "
+        "public. If the page has no weekly schedule, week=[].\n"
         "notice = one short sentence (max 160 chars) about any current/holiday/event "
         "change relevant today, else empty string.\n\n"
         "PAGE TEXT:\n" + snippet
     )
+    return system, user
+
+
+def call_claude(key, page_text, pool_name, today_iso, weekday_hr, is_holiday, template_lines=frozenset()):
+    """Claude Haiku through the Messages API (raw HTTP: this file is standard library only, like the
+    rest of the app; the machine installs no packages). One attempt after a 429 or a 5xx."""
+    system, user = prompts(page_text, pool_name, today_iso, weekday_hr, is_holiday, template_lines, CLAUDE_MAX_CHARS)
+    payload = json.dumps({
+        "model": CLAUDE_MODEL,
+        "max_tokens": 1024,
+        "temperature": 0,
+        "system": system,
+        "messages": [{"role": "user", "content": user}],
+    }).encode("utf-8")
+    last = None
+    for attempt in range(3):
+        req = urllib.request.Request(CLAUDE_URL, data=payload, headers={
+            "x-api-key": key,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+            "User-Agent": "shopfinder-pools/1.0",
+        })
+        try:
+            with urllib.request.urlopen(req, timeout=90) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            break
+        except urllib.error.HTTPError as e:
+            body = e.read().decode("utf-8", "ignore")
+            last = e
+            if e.code in (429, 500, 502, 503, 529) and attempt < 2:
+                wait = e.headers.get("retry-after")
+                secs = float(wait) if wait and wait.replace(".", "", 1).isdigit() else 8.0 * (attempt + 1)
+                log("  %d from Claude (%s), waiting %.0f s" % (e.code, body[:120].replace("\n", " "), min(secs, 60)))
+                time.sleep(min(secs, 60))
+                continue
+            log("  Claude answered %d: %s" % (e.code, body[:300].replace("\n", " ")))
+            raise
+    else:
+        raise last or RuntimeError("Claude did not answer")
+    if data.get("stop_reason") == "refusal":
+        raise RuntimeError("Claude declined the page")
+    text = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text").strip()
+    text = re.sub(r"^```(?:json)?|```$", "", text).strip()
+    m = re.search(r"\{.*\}", text, re.S)
+    return json.loads(m.group(0) if m else text)
+
+
+def call_groq(key, page_text, pool_name, today_iso, weekday_hr, is_holiday, template_lines=frozenset()):
+    """The fallback extractor when there is no Anthropic key: Groq, strict JSON."""
+    system, user = prompts(page_text, pool_name, today_iso, weekday_hr, is_holiday, template_lines)
     last = None
     for model in GROQ_MODELS:
         for attempt in range(4):
@@ -268,23 +352,39 @@ def hours_text(ranges, closed_today):
     return ", ".join(r[0] + "-" + r[1] for r in ranges)
 
 
-def process_pool(key, p, now, today_iso, weekday_hr, is_holiday, template_lines=frozenset()):
+def week_list(raw):
+    """The weekly schedule as the page shows it: [{"days": "Mon-Fri", "hours": "06:30-20:00"}, ...],
+    at most eight short entries, anything odd dropped rather than shown."""
+    out = []
+    for item in (raw or [])[:8]:
+        if not isinstance(item, dict):
+            continue
+        days = str(item.get("days") or "").strip()[:24]
+        hours = str(item.get("hours") or "").strip()[:60]
+        if days and hours:
+            out.append({"days": days, "hours": hours})
+    return out
+
+
+def process_pool(extract, p, now, today_iso, weekday_hr, is_holiday, template_lines=frozenset()):
     """One pool: fetch its page, extract the hours. Runs in a worker thread."""
     entry = {
         "id": p["id"], "name": p["name"], "addr": p["addr"],
         "lat": p["lat"], "lng": p["lng"], "url": p["url"],
-        "open_now": None, "today_hours": "Unknown", "notice": "",
+        "open_now": None, "today_hours": "Unknown", "week": [], "notice": "",
     }
     try:
         log("fetching " + p["name"])
         text = fetch_page(p["url"])
-        res = call_groq(key, text, p["name"], today_iso, weekday_hr, is_holiday, template_lines)
+        res = extract(text, p["name"], today_iso, weekday_hr, is_holiday, template_lines)
         ranges = res.get("today_ranges") or []
         closed = res.get("closed_today", None)
         entry["open_now"] = (False if closed is True else compute_open_now(ranges, now))
         entry["today_hours"] = hours_text(ranges, closed)
+        entry["week"] = week_list(res.get("week"))
         entry["notice"] = (res.get("notice") or "").strip()[:200]
         log("  -> " + p["name"] + ": " + entry["today_hours"] +
+            ("  week: " + "; ".join(w["days"] + " " + w["hours"] for w in entry["week"]) if entry["week"] else "  (no week)") +
             (" | " + entry["notice"] if entry["notice"] else ""))
     except urllib.error.HTTPError as e:
         body = ""
@@ -299,9 +399,19 @@ def process_pool(key, p, now, today_iso, weekday_hr, is_holiday, template_lines=
 
 
 def main():
-    key = groq_key()
-    if not key:
-        log("no Groq key: set GROQ_API_KEY or write it to " + os.path.join(DATA_DIR, "groq_key"))
+    if anthropic_key():
+        akey = anthropic_key()
+        extract = lambda *a: call_claude(akey, *a)            # noqa: E731
+        source = "sportskiobjekti.hr via Claude (" + CLAUDE_MODEL + ")"
+        log("extractor: Claude " + CLAUDE_MODEL)
+    elif groq_key():
+        gkey = groq_key()
+        extract = lambda *a: call_groq(gkey, *a)              # noqa: E731
+        source = "sportskiobjekti.hr via Groq extraction"
+        log("extractor: Groq (no Anthropic key at " + os.path.join(DATA_DIR, "anthropic_key") + ")")
+    else:
+        log("no key: set ANTHROPIC_API_KEY or write it to " + os.path.join(DATA_DIR, "anthropic_key") +
+            " (or GROQ_API_KEY / groq_key as the fallback)")
         sys.exit(2)
     now = datetime.datetime.now()
     today_iso = now.strftime("%Y-%m-%d")
@@ -310,7 +420,7 @@ def main():
 
     template_lines = fetch_template_lines()
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
-        futures = {ex.submit(process_pool, key, p, now, today_iso, weekday_hr, is_holiday, template_lines): i
+        futures = {ex.submit(process_pool, extract, p, now, today_iso, weekday_hr, is_holiday, template_lines): i
                    for i, p in enumerate(POOLS)}
         results = [None] * len(POOLS)
         for fut in concurrent.futures.as_completed(futures):
@@ -318,7 +428,7 @@ def main():
 
     payload = {
         "updated": now.astimezone().isoformat(timespec="minutes"),
-        "source": "sportskiobjekti.hr via Groq extraction",
+        "source": source,
         "pools": results,
     }
     out_dir = os.path.dirname(OUT_PATH)

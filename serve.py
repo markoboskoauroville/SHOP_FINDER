@@ -21,6 +21,14 @@ On the Oracle machine (install.sh): HOST=127.0.0.1 PORT=8900 PREFIX=/shopfinder,
 reached only through the pages.dev door. On a phone in Termux or on a Mac: python3 serve.py, then
 http://localhost:8080. Nothing else to configure.
 
+The console (Marko, 13.9.2026: "Q as a quit key, U as update key, the same as my other Termux
+apps"): in a terminal, serve.py prints the banner and the key row every app on this phone has,
+    q quit   o open page   u check for update   r restart
+one key, no Enter (console.py, the shape of MAHA_TRANSCRIBE_TERMUX_TERMINAL's). U fetches GitHub,
+shows the installed and the available version (version.py here and on origin/main), asks for y,
+pulls with --ff-only and restarts itself on the same port (selfupdate.py). No terminal (systemd on
+the machine, nohup, a pipe): no keys, it serves; Ctrl-C stops it as before.
+
 Settings: HOST (default 0.0.0.0), PORT (8080), PREFIX (empty), SHOPFINDER_DATA (the folder of
 pools.json and groq_key; default: this folder), UPDATE_MIN_AGE (minutes, default 10).
 """
@@ -38,6 +46,10 @@ import urllib.parse
 import urllib.request
 import urllib.error
 import collections
+
+import console as term
+import selfupdate
+import version
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PUBLIC = os.path.join(HERE, "public")
@@ -347,13 +359,31 @@ class Server(socketserver.ThreadingTCPServer):
     daemon_threads = True
 
 
+def console_snapshot():
+    return {"version": version.APP_VERSION, "pools_updated": pools_updated(), "google": bool(google_key())}
+
+
+def console_busy():
+    """An update or a restart while update_pools.py runs would cut it in half."""
+    if update_state["running"]:
+        return "a pool update is running, press u again when the page says it is done"
+    return ""
+
+
 if __name__ == "__main__":
     if not os.path.isdir(PUBLIC):
         print("no public/ folder beside serve.py: " + PUBLIC)
         sys.exit(1)
-    with Server((HOST, PORT), Handler) as httpd:
-        print("serving %s at http://%s:%d%s/" % (PUBLIC, "localhost" if HOST in ("0.0.0.0", "127.0.0.1") else HOST, PORT, PREFIX), flush=True)
-        try:
-            httpd.serve_forever()
-        except KeyboardInterrupt:
-            print("\nstopped")
+    try:
+        httpd = Server((HOST, PORT), Handler)
+    except OSError as e:
+        print("port %d is taken (%s): another copy of this app? PORT=8081 python3 serve.py picks another" % (PORT, e.strerror))
+        sys.exit(1)
+    url = "http://%s:%d%s/" % ("localhost" if HOST in ("0.0.0.0", "127.0.0.1") else HOST, PORT, PREFIX)
+    with httpd:
+        action = term.run(httpd, url, snapshot=console_snapshot,
+                          on_check_update=selfupdate.check_remote, on_perform_update=selfupdate.perform_update,
+                          busy=console_busy)
+    if action == "restart":
+        # on the main thread: the listening socket is closed, the terminal restored; same pid, same port
+        os.execv(sys.executable, [sys.executable, os.path.abspath(__file__)] + sys.argv[1:])

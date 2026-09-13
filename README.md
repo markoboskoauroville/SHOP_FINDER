@@ -19,6 +19,31 @@ official pool pages every morning.
 9.9.2026, west), Bazeni Mladost outdoor, Zimsko plivalište Mladost, Utrina, Šalata, Svetice, Jelkovec,
 Iver. The list is in `public/index.html` and again in `update_pools.py`; change both.
 
+## On the phone: `mapool`
+
+    mapool             start the server, the page opens; the console has the keys every app here has:
+                         q quit   o open page   u check for update   r restart
+    mapool update      pull the newest version from GitHub and exit (u does it live, with a y to confirm)
+    mapool boot        start at boot (Termux:Boot), no console
+    mapool install     put the command on the PATH (once, after the clone)
+
+The U key fetches GitHub, shows the installed and the available version (`version.py`, one whole
+number), asks for `y`, pulls with `--ff-only` and restarts itself on the same port. Without a
+terminal (systemd on the machine, nohup, a pipe) there are no keys: it serves, Ctrl-C stops it.
+
+## The page (v16, 13.9.2026)
+
+- **Shops**: the title carries the street and, in parentheses, the km from **B**ritish Square and
+  from **N**ova TV: `Spar · Ilica 12 (B 0.4 · N 7.1)`.
+- **Pools**: the week for the general public as one compact line per pool (`Mon-Fri 06:30-21:30 ·
+  Sat-Sun 08:00-20:00 · Holidays 12:00-20:00`), read from the official pages by **Claude Haiku**
+  (`update_pools.py`, the key on the machine). Bazen Špansko comes first; a pool with more visits
+  comes before it.
+- **Visits**: `Visited ✓` on a pool counts a visit; `stats` opens the log where each visit takes
+  hours, km, laps and €, with this month / this year / all time, by month and by year; 📊 next to
+  the Pools pill is the same for all pools together. The log lives in the browser (localStorage
+  `sf_visits`); *copy the whole log* / *paste a log in* moves it to another phone.
+
 ## The files
 
     public/index.html        the app, one file, no build
@@ -27,20 +52,28 @@ Iver. The list is in `public/index.html` and again in `update_pools.py`; change 
     functions/_middleware.js the Pages Function: relays the data addresses to the machine; no secret in it
     serve.py                 the server: the page, pools.json, /update, /health, /places and /gtile (Google, with
                              the key on the machine), /config.js; standard library
-    update_pools.py          the official pages through Groq -> pools.json (key: SHOPFINDER_DATA/groq_key)
+    console.py               the terminal side: banner, q/o/u/r, the update offer (the shape of Maha Transcribe's)
+    selfupdate.py            the U key: version.py here against origin/main, git pull --ff-only
+    version.py               APP_VERSION, one whole number, bumped on every change
+    update_pools.py          the official pages through Claude Haiku (Groq as the fallback) -> pools.json:
+                             today's hours, the week, a notice (key: SHOPFINDER_DATA/anthropic_key)
+    mapool                   the phone command (run, update, boot, install, where)
     install.sh               ON the machine: shopfinder.service (:8900, /shopfinder), the GitHub updater
                              every minute, the pool timer at 06:15 Zagreb
-    deploy.sh                from the Mac: the Pages deploy; `key` puts the Groq and Google keys on the machine
-    shopfinder-v1.sh         the Termux menu for a phone (start, stop, log, boot)
+    deploy.sh                from the Mac: the Pages deploy; `key` puts the Anthropic, Groq and Google keys on the machine
+    tests/                   the four tests (python3 tests/run_all.py): the mechanism, the running app on a
+                             pty, the ugly cases, the upgrade over a running v1
     HANDOVER.md              the whole story: where it runs, the secrets, what is paid, what was decided
 
 ## Run it anywhere
 
-    python3 serve.py            # http://localhost:8080
-    python3 update_pools.py     # writes pools.json next to it (needs a Groq key, see the handover)
+    python3 serve.py            # http://localhost:8080, the console when in a terminal
+    python3 update_pools.py     # writes pools.json next to it (needs the Anthropic key, see the handover)
 
-The keys live on the machine (`~/.shopfinder/groq_key`, `google_maps_key`), never in the page, the
-repo, or Cloudflare. `bash deploy.sh key` puts them there from the Mac.
+The keys live on the machine (`~/.shopfinder/anthropic_key`, `groq_key`, `google_maps_key`), never
+in the page, the repo, or Cloudflare. `bash deploy.sh key` puts them there from the Mac. On the
+phone, `mapool` hands the key from `~/storage/downloads/Api/Claude_api.txt` to the updater in the
+environment, without copying it.
 
 ## Deploy
 

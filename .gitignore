@@ -6,3 +6,11 @@ __pycache__/
 node_modules/
 .DS_Store
 google_maps_key
+
+# the data folder when it is this folder (a phone, a Mac): the hours and the keys stay out of git
+pools.json
+pools.json.tmp
+anthropic_key
+groq_key
+google_maps_key
+__pycache__/

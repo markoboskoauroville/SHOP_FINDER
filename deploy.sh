@@ -5,7 +5,7 @@
 # written over ssh from the API folder, never printed, never in the repo. The Cloudflare account
 # token is read from the API folder for the deploy only.
 #   bash deploy.sh            deploy the page
-#   bash deploy.sh key        put the Groq key and the Google key on the machine (~/.shopfinder/)
+#   bash deploy.sh key        put the Anthropic, Groq and Google keys on the machine (~/.shopfinder/)
 #   bash deploy.sh machine    run install.sh on the machine over ssh
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -27,6 +27,13 @@ if g: print('groq_key ' + g[-1])
 raw = open(os.path.expanduser('~/Downloads/API/Google-maps-api.txt')).read()
 m = re.findall(r'AIza[0-9A-Za-z_\-]{35}', raw)
 if m: print('google_maps_key ' + m[-1])
+# the Anthropic key (13.9.2026): update_pools.py reads the pool pages with Claude Haiku; the file in
+# the API folder is Claude_api.txt on the phone, any Claude*.txt / claude*.txt on the Mac
+import glob
+for path in sorted(glob.glob(os.path.expanduser('~/Downloads/API/[Cc]laude*.txt'))):
+    a = re.findall(r'sk-ant-[A-Za-z0-9_\-]{20,}', open(path).read())
+    if a:
+        print('anthropic_key ' + a[-1]); break
 KEYS
   exit 0
 fi
