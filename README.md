@@ -21,7 +21,9 @@ Iver. The list is in `public/index.html` and again in `update_pools.py`; change 
 
 ## How to install (Termux)
 
-    curl -fsSL https://raw.githubusercontent.com/markoboskoauroville/SHOP_FINDER/main/install-termux.sh | bash
+```sh
+curl -fsSL https://raw.githubusercontent.com/markoboskoauroville/SHOP_FINDER/main/install-termux.sh | bash
+```
 
 One line, no token: the repository is public and holds no key. It clones to
 `~/SHOP_FINDER`, puts `mapool` on the PATH, and says what to do next. Keys come from the
@@ -29,11 +31,13 @@ keyring (`keyring get anthropic`, `keyring get google`) or from the ⚙ gear on 
 
 ## On the phone: `mapool`
 
-    mapool             start the server, the page opens; the console has the keys every app here has:
-                         q quit   o open page   u check for update   r restart
-    mapool update      pull the newest version from GitHub and exit (u does it live, with a y to confirm)
-    mapool boot        start at boot (Termux:Boot), no console
-    mapool install     put the command on the PATH (once, after the clone)
+```
+mapool             start the server, the page opens; the console has the keys every app here has:
+                     q quit   o open page   u check for update   r restart
+mapool update      pull the newest version from GitHub and exit (u does it live, with a y to confirm)
+mapool boot        start at boot (Termux:Boot), no console
+mapool install     put the command on the PATH (once, after the clone)
+```
 
 The U key fetches GitHub, shows the installed and the available version (`version.py`, one whole
 number), asks for `y`, pulls with `--ff-only` and restarts itself on the same port. Without a
@@ -68,29 +72,33 @@ for systemd, never a move, because Caddy routes to one number.
 
 ## The files
 
-    public/index.html        the app, one file, no build
-    public/_headers          no-store for pools.json and /update on Pages
-    (config.js)              not a file: serve.py answers it with {google, googleTiles}, never a key
-    functions/_middleware.js the Pages Function: relays the data addresses to the machine; no secret in it
-    serve.py                 the server: the page, pools.json, /update, /health, /places and /gtile (Google, with
-                             the key on the machine), /config.js; standard library
-    console.py               the terminal side: banner, q/o/u/r, the update offer (the shape of Maha Transcribe's)
-    selfupdate.py            the U key: version.py here against origin/main, git pull --ff-only
-    version.py               APP_VERSION, one whole number, bumped on every change
-    update_pools.py          the official pages through Claude Haiku (Groq as the fallback) -> pools.json:
-                             today's hours, the week, a notice (key: SHOPFINDER_DATA/anthropic_key)
-    mapool                   the phone command (run, update, boot, install, where)
-    install.sh               ON the machine: shopfinder.service (:8900, /shopfinder), the GitHub updater
-                             every minute, the pool timer at 06:15 Zagreb
-    deploy.sh                from the Mac: the Pages deploy; `key` puts the Anthropic, Groq and Google keys on the machine
-    tests/                   the four tests (python3 tests/run_all.py): the mechanism, the running app on a
-                             pty, the ugly cases, the upgrade over a running v1
-    HANDOVER.md              the whole story: where it runs, the secrets, what is paid, what was decided
+```
+public/index.html        the app, one file, no build
+public/_headers          no-store for pools.json and /update on Pages
+(config.js)              not a file: serve.py answers it with {google, googleTiles}, never a key
+functions/_middleware.js the Pages Function: relays the data addresses to the machine; no secret in it
+serve.py                 the server: the page, pools.json, /update, /health, /places and /gtile (Google, with
+                         the key on the machine), /config.js; standard library
+console.py               the terminal side: banner, q/o/u/r, the update offer (the shape of Maha Transcribe's)
+selfupdate.py            the U key: version.py here against origin/main, git pull --ff-only
+version.py               APP_VERSION, one whole number, bumped on every change
+update_pools.py          the official pages through Claude Haiku (Groq as the fallback) -> pools.json:
+                         today's hours, the week, a notice (key: SHOPFINDER_DATA/anthropic_key)
+mapool                   the phone command (run, update, boot, install, where)
+install.sh               ON the machine: shopfinder.service (:8900, /shopfinder), the GitHub updater
+                         every minute, the pool timer at 06:15 Zagreb
+deploy.sh                from the Mac: the Pages deploy; `key` puts the Anthropic, Groq and Google keys on the machine
+tests/                   the four tests (python3 tests/run_all.py): the mechanism, the running app on a
+                         pty, the ugly cases, the upgrade over a running v1
+HANDOVER.md              the whole story: where it runs, the secrets, what is paid, what was decided
+```
 
 ## Run it anywhere
 
-    python3 serve.py            # http://localhost:8080, the console when in a terminal
-    python3 update_pools.py     # writes pools.json next to it (needs the Anthropic key, see the handover)
+```sh
+python3 serve.py            # http://localhost:8080, the console when in a terminal
+python3 update_pools.py     # writes pools.json next to it (needs the Anthropic key, see the handover)
+```
 
 The keys live on the machine (`~/.shopfinder/anthropic_key`, `groq_key`, `google_maps_key`), never
 in the page, the repo, or Cloudflare. `bash deploy.sh key` puts them there from the Mac. On the
@@ -99,5 +107,7 @@ environment, without copying it.
 
 ## Deploy
 
-    git push                    # the machine pulls within a minute and restarts the service
-    bash deploy.sh              # the page to shopfinder.pages.dev
+```sh
+git push                    # the machine pulls within a minute and restarts the service
+bash deploy.sh              # the page to shopfinder.pages.dev
+```
