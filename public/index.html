@@ -128,7 +128,7 @@
   <div id="verBadge" style="position:fixed;top:6px;right:8px;z-index:9999;
     font-size:10px;font-weight:400;color:#3a4048;background:transparent;
     border:none;padding:2px 4px;
-    pointer-events:none;font-family:system-ui,sans-serif;">v17</div>
+    pointer-events:none;font-family:system-ui,sans-serif;">v19</div>
   <div class="controls">
     <div class="toggle active" id="danasToggle">Today</div>
     <div class="toggle" id="mapsToggle" title="Map source">OSM · free</div>
@@ -177,7 +177,9 @@
 <script src="config.js"></script>
 <script>
 /* =====================================================================================
-   Store & Pool Finder, v18 (20.10.2026)
+   Store & Pool Finder, v19 (20.10.2026)
+
+   v19: the free search no longer hangs: a third Overpass server (maps.mail.ru, asked twice) and 30 s per server.
 
    v18, Marko's ask of 20.10.2026: a Bank pill. "Only the bank which is open at this hour and close
    to my location": with Today on, a bank is shown only when its hours say it is open now (a bank
@@ -220,7 +222,11 @@
 const CONFIG = Object.assign({ google: false, googleTiles: false }, window.SF_CONFIG || {});
 
 const OSM_TILES = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
-const OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter"];
+// 20.10.2026: overpass-api.de answered 406 to the phone and kumi.systems never answered, so the free
+// search hung; maps.mail.ru answers (with CORS) in about 15 s but now and then says 504 at once, so it
+// is asked twice. Each server gets 30 s before the next is tried.
+const OVERPASS_MAILRU = "https://maps.mail.ru/osm/tools/overpass/api/interpreter";
+const OVERPASS = ["https://overpass-api.de/api/interpreter", OVERPASS_MAILRU, OVERPASS_MAILRU, "https://overpass.kumi.systems/api/interpreter"];
 const LEAFLET = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet";
 const OSRM_FOOT = "https://routing.openstreetmap.de/routed-foot/route/v1/foot/";
 const ZAGREB = { lat: 45.8131, lng: 15.9775 };
@@ -407,7 +413,7 @@ async function overpassSearch(brandKey, center, radius) {
   for (const ep of OVERPASS) {
     try {
       const res = await fetch(ep, { method: "POST", body: "data=" + encodeURIComponent(q),
-        headers: { "Content-Type": "application/x-www-form-urlencoded" } });
+        headers: { "Content-Type": "application/x-www-form-urlencoded" }, signal: AbortSignal.timeout(30000) });
       if (!res.ok) throw new Error("Overpass " + res.status);
       const data = await res.json();
       return (data.elements || []).map(el => {

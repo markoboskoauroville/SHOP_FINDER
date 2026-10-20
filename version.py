@@ -12,6 +12,7 @@ v1 is the first numbered version (13.9.2026): everything before it was the unnum
 v2 (13.9.2026): the settings gear, the keys tested with the keyring's probes, the port picked when taken.
 v3 (13.9.2026): the live port registry (portpick.announce, ports.md §3); the page opens in Chrome, bounded.
 v4 (20.10.2026): the Bank pill: the nearest banks open at this hour (page v18).
+v5 (20.10.2026): the free search no longer hangs: maps.mail.ru as a third Overpass server (asked twice), 30 s per server.
 """
 
-APP_VERSION = 4
+APP_VERSION = 5
