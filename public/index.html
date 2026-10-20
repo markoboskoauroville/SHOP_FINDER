@@ -110,6 +110,7 @@
   .brand-bio { background: rgba(63,185,80,0.15); color: #5fd676; }
   .brand-mlinar { background: rgba(214,158,46,0.15); color: #e0b54a; }
   .brand-mall { background: rgba(163,113,247,0.15); color: #a371f7; }
+  .brand-bank { background: rgba(234,179,8,0.15); color: #facc15; }
   .brand-pool { background: rgba(56,189,248,0.15); color: var(--pool); }
   /* the map switch: free (OpenStreetMap) green, paid (Google) orange */
   .toggle.free { border-color: var(--open); color: var(--open); background: rgba(63,185,80,0.08); }
@@ -161,6 +162,7 @@
     <div class="pill" data-brand="bio">Bio&amp;Bio</div>
     <div class="pill" data-brand="mlinar">Mlinar</div>
     <div class="pill" data-brand="mall">Mall</div>
+    <div class="pill" data-brand="bank">Bank</div>
   </div>
 
   <div id="mapWrap">
@@ -175,7 +177,12 @@
 <script src="config.js"></script>
 <script>
 /* =====================================================================================
-   Store & Pool Finder, v17 (13.9.2026)
+   Store & Pool Finder, v18 (20.10.2026)
+
+   v18, Marko's ask of 20.10.2026: a Bank pill. "Only the bank which is open at this hour and close
+   to my location": with Today on, a bank is shown only when its hours say it is open now (a bank
+   with no hours is left out, unlike a shop); nearest first. When none is open, the notice names the
+   nearest bank and when it opens. Today off shows every bank in ρ with its hours.
 
    v17: the settings gear (⚙, the far end of the controls row). On the machine the page runs on (a
    phone, a Mac) it shows which keys the server holds (Google, Anthropic, Groq), takes a picked key
@@ -270,9 +277,13 @@ const BRANDS = {
   mall:   { label: "Mall", cls: "brand-mall", pin: "C", queries: ["Supernova Buzin Zagreb", "Avenue Mall Zagreb", "Arena Centar Zagreb"],
             match: n => n.includes("supernova") || n.includes("avenue") || n.includes("arena"),
             matchOsm: () => true,
-            osm: ['["shop"="mall"]'] }
+            osm: ['["shop"="mall"]'] },
+  // any bank: amenity=bank is the branch itself (an ATM is amenity=atm and stays out)
+  bank:   { label: "bank", cls: "brand-bank", pin: "€", queries: ["bank", "banka"], strictOpen: true,
+            match: () => true, matchOsm: () => true,
+            osm: ['["amenity"="bank"]'] }
 };
-const STORE_KEYS = ["spar", "dm", "bio", "mlinar", "mall"];
+const STORE_KEYS = ["spar", "dm", "bio", "mlinar", "mall", "bank"];
 
 /* ---------- Zagreb city pools (Upravljanje sportskim objektima) ----------
    Only the name and the position are fixed here; the hours come from pools.json or Google.
@@ -679,14 +690,21 @@ function render() {
   const list = window._allPlaces || [];
   // "Today": Google knows the hours of nearly every shop, so only the open ones are shown; OSM shops
   // without an opening_hours tag, and pools whose hours did not load, stay as "hours unknown".
+  // A bank counts as open only when its hours say so (Marko: "only the bank which is open at this hour").
   const show = openFilter === "open"
-    ? list.filter(s => (provider === "google" && !s.isPool) ? s.openNow === true : s.openNow !== false)
+    ? list.filter(s => ((provider === "google" && !s.isPool) || (!s.isPool && BRANDS[s.brand].strictOpen)) ? s.openNow === true : s.openNow !== false)
     : list;
   lastShown = show;
   if (mapVisible) showOverview();
   if (!show.length) {
+    const banks = list.filter(s => s.brand === "bank");
+    const soon = banks.filter(s => s.nextOpen)[0];
     wrap.innerHTML = openFilter === "open"
-      ? '<div class="notice">Nothing selected is open now. Turn off “Today” or widen ρ.</div>'
+      ? (banks.length
+          ? '<div class="notice">No bank in ρ is open now (' + banks.length + ' found).' +
+            (soon ? ' Nearest to open: <b>' + esc(soon.name) + '</b>, ' + fmtDist(soon.dist) + ' — ' + esc(soon.nextOpen) + '.' : '') +
+            ' Turn off “Today” to see them all.</div>'
+          : '<div class="notice">Nothing selected is open now. Turn off “Today” or widen ρ.</div>')
       : '<div class="store">No results in this radius.</div>';
     return;
   }
