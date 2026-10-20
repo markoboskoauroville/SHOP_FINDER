@@ -180,6 +180,7 @@
    Store & Pool Finder, v19 (20.10.2026)
 
    v19: the free search no longer hangs: a third Overpass server (maps.mail.ru, asked twice) and 30 s per server.
+   Google's bank search leaves out the cash machines (primaryType atm, or bankomat/ATM in the name).
 
    v18, Marko's ask of 20.10.2026: a Bank pill. "Only the bank which is open at this hour and close
    to my location": with Today on, a bank is shown only when its hours say it is open now (a bank
@@ -285,8 +286,9 @@ const BRANDS = {
             matchOsm: () => true,
             osm: ['["shop"="mall"]'] },
   // any bank: amenity=bank is the branch itself (an ATM is amenity=atm and stays out)
+  // Google's "bank" search also brings the cash machines ("Open 24 hours"): left out by type and by name
   bank:   { label: "bank", cls: "brand-bank", pin: "€", queries: ["bank", "banka"], strictOpen: true,
-            match: () => true, matchOsm: () => true,
+            match: n => !/bankomat|\batm\b/.test(n), matchOsm: () => true, skipType: "atm",
             osm: ['["amenity"="bank"]'] }
 };
 const STORE_KEYS = ["spar", "dm", "bio", "mlinar", "mall", "bank"];
@@ -478,7 +480,8 @@ async function placesQuery(q, center, radius, n) {
   return data.places || [];
 }
 async function placesSearch(q, brandKey, center, radius) {
-  return (await placesQuery(q, center, radius, 20)).map(p => ({
+  const skip = BRANDS[brandKey].skipType;
+  return (await placesQuery(q, center, radius, 20)).filter(p => !skip || p.type !== skip).map(p => ({
     id: p.id, name: p.name || "Store", addr: p.addr || "", lat: p.lat, lng: p.lng,
     street: (p.addr || "").split(",")[0].trim(),
     openNow: p.openNow === true ? true : (p.openNow === false ? false : undefined),

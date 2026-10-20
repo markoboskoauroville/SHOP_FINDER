@@ -193,7 +193,8 @@ def google_places(q, lat, lng, radius, n):
         "Content-Type": "application/json",
         "X-Goog-Api-Key": google_key(),
         "X-Goog-FieldMask": "places.id,places.displayName,places.formattedAddress,places.location,"
-                            "places.currentOpeningHours.openNow,places.currentOpeningHours.weekdayDescriptions,places.googleMapsUri",
+                            "places.currentOpeningHours.openNow,places.currentOpeningHours.weekdayDescriptions,places.googleMapsUri,"
+                            "places.primaryType",
         "User-Agent": "shopfinder/1.0",
     })
     with urllib.request.urlopen(req, timeout=20) as resp:
@@ -206,7 +207,7 @@ def google_places(q, lat, lng, radius, n):
             "id": p.get("id"), "name": (p.get("displayName") or {}).get("text"),
             "addr": p.get("formattedAddress", ""), "lat": loc.get("latitude"), "lng": loc.get("longitude"),
             "openNow": oh.get("openNow"), "weekday": oh.get("weekdayDescriptions") or [],
-            "mapsUri": p.get("googleMapsUri"),
+            "mapsUri": p.get("googleMapsUri"), "type": p.get("primaryType") or "",
         })
     return out
 
