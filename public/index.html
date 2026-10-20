@@ -162,7 +162,7 @@
     <div class="pill" data-brand="bio">Bio&amp;Bio</div>
     <div class="pill" data-brand="mlinar">Mlinar</div>
     <div class="pill" data-brand="mall">Mall</div>
-    <div class="pill" data-brand="bank">Bank</div>
+    <div class="pill" data-brand="bank">Erste</div>
   </div>
 
   <div id="mapWrap">
@@ -177,7 +177,11 @@
 <script src="config.js"></script>
 <script>
 /* =====================================================================================
-   Store & Pool Finder, v19 (20.10.2026)
+   Store & Pool Finder, v20 (20.10.2026)
+
+   v20, the same day: Erste only. "Only Erste Bank I need, no other banks." The pill says Erste,
+   Google is asked for Erste and its answers kept only when the name says Erste, OSM is asked only
+   for banks named, branded or operated by Erste.
 
    v19: the free search no longer hangs: a third Overpass server (maps.mail.ru, asked twice) and 30 s per server.
    Google's bank search leaves out the cash machines (primaryType atm, or bankomat/ATM in the name).
@@ -285,11 +289,12 @@ const BRANDS = {
             match: n => n.includes("supernova") || n.includes("avenue") || n.includes("arena"),
             matchOsm: () => true,
             osm: ['["shop"="mall"]'] },
-  // any bank: amenity=bank is the branch itself (an ATM is amenity=atm and stays out)
-  // Google's "bank" search also brings the cash machines ("Open 24 hours"): left out by type and by name
-  bank:   { label: "bank", cls: "brand-bank", pin: "€", queries: ["bank", "banka"], strictOpen: true,
-            match: n => !/bankomat|\batm\b/.test(n), matchOsm: () => true, skipType: "atm",
-            osm: ['["amenity"="bank"]'] }
+  // Erste Bank only (Marko, 20.10.2026: "only Erste Bank, no other banks"). amenity=bank is the
+  // branch itself; an Erste ATM is amenity=atm and stays out. The key stays "bank" so a saved pill
+  // still opens it.
+  bank:   { label: "Erste", cls: "brand-bank", pin: "€", queries: ["Erste banka", "Erste&Steiermärkische Bank"], strictOpen: true,
+            match: n => n.includes("erste") && !/bankomat|\batm\b/.test(n), matchOsm: () => true, skipType: "atm",
+            osm: ['["amenity"="bank"]["name"~"erste",i]', '["amenity"="bank"]["brand"~"erste",i]', '["amenity"="bank"]["operator"~"erste",i]'] }
 };
 const STORE_KEYS = ["spar", "dm", "bio", "mlinar", "mall", "bank"];
 
@@ -710,7 +715,7 @@ function render() {
     const soon = banks.filter(s => s.nextOpen)[0];
     wrap.innerHTML = openFilter === "open"
       ? (banks.length
-          ? '<div class="notice">No bank in ρ is open now (' + banks.length + ' found).' +
+          ? '<div class="notice">No Erste branch in ρ is open now (' + banks.length + ' found).' +
             (soon ? ' Nearest to open: <b>' + esc(soon.name) + '</b>, ' + fmtDist(soon.dist) + ' — ' + esc(soon.nextOpen) + '.' : '') +
             ' Turn off “Today” to see them all.</div>'
           : '<div class="notice">Nothing selected is open now. Turn off “Today” or widen ρ.</div>')

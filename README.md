@@ -1,6 +1,6 @@
 # SHOP_FINDER, the Store & Pool Finder
 
-One page that finds the nearest Spar, dm, bio&bio, Mlinar, mall or open bank around you, and shows the eight
+One page that finds the nearest Spar, dm, bio&bio, Mlinar, mall or open Erste branch around you, and shows the eight
 Zagreb city pools with today's public-swim hours. It lives at **https://shopfinder.pages.dev**
 (Cloudflare Pages, free) and on the free Oracle machine, where a small Python server reads the
 official pool pages every morning.
@@ -57,12 +57,13 @@ The server never fails to start because a port is taken (`portpick.py`): 8080, t
 fifteen, then any, and the banner says which. On the machine (PREFIX set) a taken port is an error
 for systemd, never a move, because Caddy routes to one number.
 
-## The bank (v18, 20.10.2026)
+## Erste (v20, 20.10.2026)
 
-**Bank** finds the banks (OpenStreetMap `amenity=bank`, or Google's "bank" search) and, with *Today*
-on, shows only the ones open at this hour, nearest first. A bank without hours is left out (a shop
-without hours stays, as "hours unknown"). When none is open, the notice names the nearest one and
-when it opens; *Today* off lists them all with today's hours.
+**Erste** finds the Erste Bank branches and no other bank (OpenStreetMap `amenity=bank` named,
+branded or operated by Erste, or Google's "Erste banka" search with the name checked) and, with
+*Today* on, shows only the ones open at this hour, nearest first. A branch without hours is left out
+(a shop without hours stays, as "hours unknown"). When none is open, the notice names the nearest one
+and when it opens; *Today* off lists them all with today's hours. Until v20 it found every bank; Erste's cash machines stay out as before.
 
 ## The page (v16, 13.9.2026)
 
