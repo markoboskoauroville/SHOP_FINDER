@@ -14,6 +14,7 @@ v3 (13.9.2026): the live port registry (portpick.announce, ports.md §3); the pa
 v4 (20.10.2026): the Bank pill: the nearest banks open at this hour (page v18).
 v5 (20.10.2026): the free search no longer hangs: maps.mail.ru as a third Overpass server (asked twice), 30 s per server;
     Google's bank results leave out the ATMs (primaryType from serve.py).
+v6 (20.10.2026): Erste only: the pill finds Erste Bank branches and no other bank (page v20).
 """
 
-APP_VERSION = 5
+APP_VERSION = 6
