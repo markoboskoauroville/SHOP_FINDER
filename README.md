@@ -1,7 +1,7 @@
 # SHOP_FINDER, the Store & Pool Finder
 
 One page that finds the nearest Spar, dm, bio&bio, Mlinar, mall or open Erste branch around you, and shows the eight
-Zagreb city pools with today's public-swim hours. It lives at **https://shopfinder.pages.dev**
+Zagreb city pools with today's public-swim hours. It lives at **https://shopfinder.markobosko.org**
 (Cloudflare Pages, free) and on the free Oracle machine, where a small Python server reads the
 official pool pages every morning.
 
@@ -117,5 +117,5 @@ environment, without copying it.
 
 ```sh
 git push                    # the machine pulls within a minute and restarts the service
-bash deploy.sh              # the page to shopfinder.pages.dev
+bash deploy.sh              # the page to shopfinder.markobosko.org
 ```
